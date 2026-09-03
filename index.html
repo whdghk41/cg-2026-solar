@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>나만의 태양계</title>
+  <style>
+    body { margin: 0; background: #111; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+  </style>
+</head>
+<body>
+  <canvas id="glcanvas"></canvas>
+  <script>
+    const canvas = document.getElementById('glcanvas');
+    const gl = canvas.getContext('webgl2');
+
+    if (!gl) {
+      alert('이 브라우저에서는 WebGL2를 사용할 수 없습니다.');
+    }
+
+    function resize() {
+      // CSS 픽셀과 실제 픽셀을 맞춰 준다 (고해상도 화면 대응)
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width  = Math.floor(canvas.clientWidth  * dpr);
+      canvas.height = Math.floor(canvas.clientHeight * dpr);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+
+    function draw() {
+      resize();
+      gl.clearColor(0.08, 0.10, 0.14, 1.0);  // R, G, B, A — 각 값은 0~1
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      requestAnimationFrame(draw);
+    }
+
+    draw();
+  </script>
+</body>
+</html>
