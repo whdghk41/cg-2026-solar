@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>5주차 실습 2 — 「심해의 비밀 기지」</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #020408; }
+  canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
+  #hud { position: fixed; left: 12px; top: 12px; margin: 0; padding: 10px 13px;
+         border: 1px solid rgba(255,255,255,.14); border-radius: 6px;
+         background: rgba(4,8,16,.78); color: #cfdcef;
+         font: 12px/1.75 ui-monospace, Menlo, Consolas, monospace; }
+  #hud b { color: #5efbff; }
+  #hud .off { opacity: .35; text-decoration: line-through; }
+</style>
+</head>
+<body>
+<canvas id="glcanvas"></canvas>
+<div id="hud"></div>
+
+<script>
+/* ============================================================================
+   5주차 실습 응용 — 「심해의 비밀 기지」
+     ① point       — 심해 화산 마그마 (따뜻한 주황빛, 강한 감쇠)
+     ② directional — 수면 위 달빛 (차가운 청록색, 감쇠 없음)
+     ③ spot        — 탐수정 전조등 서치라이트 (강한 흰빛)
+
+   숫자 키 1 · 2 · 3 으로 광원을 하나씩 켜고 끌 수 있습니다.
+   ============================================================================ */
+'use strict';
+
+function makeSphere(seg) {
+  const positions = [], normals = [], indices = [];
+  for (let i = 0; i <= seg; i++) {
+    const phi = Math.PI * i / seg;
+    for (let j = 0; j <= seg * 2; j++) {
+      const th = 2 * Math.PI * j / (seg * 2);
+      const x = Math.sin(phi) * Math.cos(th), y = Math.cos(phi), z = Math.sin(phi) * Math.sin(th);
+      positions.push(x, y, z); normals.push(x, y, z);
+    }
+  }
+  const W = seg * 2 + 1;
+  for (let i = 0; i < seg; i++)
+    for (let j = 0; j < seg * 2; j++) {
+      const a = i * W + j, b = a + W;
+      indices.push(a, b, a + 1, a + 1, b, b + 1);
+    }
+  return { positions: new Float32Array(positions), normals: new Float32Array(normals),
+           indices: new Uint16Array(indices) };
+}
+function makePlane(size) {
+  const s = size / 2;
+  return { positions: new Float32Array([-s,0,-s, s,0,-s, s,0,s, -s,0,s]),
+           normals:   new Float32Array([0,1,0, 0,1,0, 0,1,0, 0,1,0]),
+           indices:   new Uint16Array([0,1,2, 0,2,3]) };
+}
+
+const VS_SOURCE = `#version 300 es
+layout(location=0) in vec3 aPos;
+layout(location=1) in vec3 aNormal;
+uniform mat4 uModel, uView, uProj;
+uniform mat3 uNormalMat;
+out vec3 vWorldPos, vNormal;
+void main() {
+  vec4 world = uModel * vec4(aPos, 1.0);
+  vWorldPos  = world.xyz;
+  vNormal    = uNormalMat * aNormal;
+  gl_Position = uProj * uView * world;
+}
+`;
+
+const FS_SOURCE = `#version 300 es
+precision highp float;
+
+in vec3 vWorldPos, vNormal;
+
+uniform vec3  uBaseColor;
+uniform float uShininess, uKs;
+uniform bool  uEmissive;
+uniform vec3  uViewPos;
+
+uniform vec3  uMagmaPos, uMagmaColor;    // ① point (마그마)
+uniform vec3  uMoonDir,  uMoonColor;     // ② directional (달빛)
+uniform vec3  uSpotPos,  uSpotDir, uSpotColor;
+uniform float uCosIn, uCosOut;           // ③ spot (탐수정)
+uniform bool  uOn1, uOn2, uOn3;
+
+out vec4 fragColor;
+
+vec3 shade(vec3 N, vec3 V, vec3 L, vec3 lightColor, float att) {
+  float lambert = max(dot(N, L), 0.0);
+  if (lambert <= 0.0) return vec3(0.0);
+  vec3  R    = reflect(-L, N);
+  float spec = pow(max(dot(R, V), 0.0), uShininess);
+  return (uBaseColor * lambert + uKs * spec) * lightColor * att;
+}
+
+void main() {
+  if (uEmissive) { fragColor = vec4(uBaseColor, 1.0); return; }
+
+  vec3 N = normalize(vNormal);
+  vec3 V = normalize(uViewPos - vWorldPos);
+
+  vec3 color = 0.04 * uBaseColor;             // 심해의 어두운 환경광
+
+  if (uOn1) {                                  // ① point — 해저 화산 마그마 (따뜻함)
+    vec3  d    = uMagmaPos - vWorldPos;
+    float dist = length(d);
+    color += shade(N, V, d / dist, uMagmaColor, 1.0 / (1.0 + 0.02 * dist * dist));
+  }
+  if (uOn2) {                                  // ② directional — 수면 위 달빛 (차가움)
+    color += shade(N, V, normalize(-uMoonDir), uMoonColor, 1.0);
+  }
+  if (uOn3) {                                  // ③ spot — 탐수정 서치라이트
+    vec3  d    = uSpotPos - vWorldPos;
+    float dist = length(d);
+    vec3  L    = d / dist;
+    float att  = 1.0 / (1.0 + 0.04 * dist * dist);
+    float c    = dot(-L, normalize(uSpotDir));
+    att *= clamp((c - uCosOut) / (uCosIn - uCosOut), 0.0, 1.0);
+    color += shade(N, V, L, uSpotColor, att);
+  }
+
+  color = color / (color + 1.0);
+  fragColor = vec4(pow(color, vec3(1.0 / 2.2)), 1.0);
+}
+`;
+
+const Mat4 = {
+  identity: function () { return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]); },
+  multiply: function (a, b) {
+    const o = new Float32Array(16);
+    for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
+      let s = 0; for (let k = 0; k < 4; k++) s += a[k*4+r] * b[c*4+k];
+      o[c*4+r] = s;
+    }
+    return o;
+  },
+  translate: function (x,y,z) { const m = Mat4.identity(); m[12]=x; m[13]=y; m[14]=z; return m; },
+  scale: function (x,y,z) { const m = Mat4.identity(); m[0]=x; m[5]=y; m[10]=z; return m; },
+  rotateY: function (r) {
+    const m = Mat4.identity(), c = Math.cos(r), s = Math.sin(r);
+    m[0]=c; m[2]=-s; m[8]=s; m[10]=c; return m;
+  },
+  perspective: function (fovy, aspect, near, far) {
+    const f = 1 / Math.tan(fovy/2), nf = 1 / (near - far);
+    return new Float32Array([f/aspect,0,0,0, 0,f,0,0, 0,0,(far+near)*nf,-1, 0,0,2*far*near*nf,0]);
+  },
+  lookAt: function (eye, center, up) {
+    let zx=eye[0]-center[0], zy=eye[1]-center[1], zz=eye[2]-center[2];
+    const zl=Math.hypot(zx,zy,zz)||1; zx/=zl; zy/=zl; zz/=zl;
+    let xx=up[1]*zz-up[2]*zy, xy=up[2]*zx-up[0]*zz, xz=up[0]*zy-up[1]*zx;
+    const xl=Math.hypot(xx,xy,xz)||1; xx/=xl; xy/=xl; xz/=xl;
+    const yx=zy*xz-zz*xy, yy=zz*xx-zx*xz, yz=zx*xy-zy*xx;
+    return new Float32Array([xx,yx,zx,0, xy,yy,zy,0, xz,yz,zz,0,
+      -(xx*eye[0]+xy*eye[1]+xz*eye[2]), -(yx*eye[0]+yy*eye[1]+yz*eye[2]),
+      -(zx*eye[0]+zy*eye[1]+zz*eye[2]), 1]);
+  },
+  normalFromMat4: function (m) {
+    const a00=m[0],a01=m[1],a02=m[2],a10=m[4],a11=m[5],a12=m[6],a20=m[8],a21=m[9],a22=m[10];
+    const b01=a22*a11-a12*a21, b11=-a22*a10+a12*a20, b21=a21*a10-a11*a20;
+    let det=a00*b01+a01*b11+a02*b21;
+    if (!det) return new Float32Array([1,0,0, 0,1,0, 0,0,1]);
+    det = 1/det;
+    return new Float32Array([
+      b01*det, (-a22*a01+a02*a21)*det, ( a12*a01-a02*a11)*det,
+      b11*det, ( a22*a00-a02*a20)*det, (-a12*a00+a02*a10)*det,
+      b21*det, (-a21*a00+a01*a20)*det, ( a11*a00-a01*a10)*det]);
+  },
+};
+
+const canvas = document.getElementById('glcanvas');
+const gl = canvas.getContext('webgl2');
+if (!gl) { alert('WebGL2를 지원하지 않는 브라우저입니다.'); throw new Error('no webgl2'); }
+
+function compileShader(type, source) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, source); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+const program = gl.createProgram();
+gl.attachShader(program, compileShader(gl.VERTEX_SHADER, VS_SOURCE));
+gl.attachShader(program, compileShader(gl.FRAGMENT_SHADER, FS_SOURCE));
+gl.linkProgram(program);
+
+const U = {};
+['uModel','uView','uProj','uNormalMat','uBaseColor','uShininess','uKs','uEmissive','uViewPos',
+ 'uMagmaPos','uMagmaColor','uMoonDir','uMoonColor','uSpotPos','uSpotDir','uSpotColor',
+ 'uCosIn','uCosOut','uOn1','uOn2','uOn3'].forEach(n => U[n] = gl.getUniformLocation(program, n));
+
+function createMesh(mesh) {
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  function attribute(data, loc, size) {
+    const b = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, b);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
+  }
+  attribute(mesh.positions, 0, 3);
+  attribute(mesh.normals, 1, 3);
+  const ibo = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
+  gl.bindVertexArray(null);
+  return { vao: vao, count: mesh.indices.length };
+}
+const sphere = createMesh(makeSphere(40));
+const plane  = createMesh(makePlane(60));
+gl.enable(gl.DEPTH_TEST);
+
+const on = { l1: true, l2: true, l3: true };
+window.addEventListener('keydown', e => {
+  if (e.key === '1') on.l1 = !on.l1;
+  if (e.key === '2') on.l2 = !on.l2;
+  if (e.key === '3') on.l3 = !on.l3;
+  paintHud();
+});
+
+const hud = document.getElementById('hud');
+function paintHud() {
+  function row(k, key, text) {
+    return `<div class="${on[k] ? '' : 'off'}"><b>[${key}]</b> ${text}</div>`;
+  }
+  hud.innerHTML = `
+    <div style="margin-bottom:6px"><b>심해 비밀 기지 연출</b></div>
+    ${row('l1', '1', 'Point — 해저 마그마 (따뜻한 주황빛)')}
+    ${row('l2', '2', 'Directional — 수면 달빛 (차가운 청록빛)')}
+    ${row('l3', '3', 'Spot — 탐수정 서치라이트')}
+    <div style="margin-top:6px;opacity:.6">드래그: 시점 회전 / 휠: 확대·축소</div>
+  `;
+}
+paintHud();
+
+const cam = { yaw: 0.4, pitch: 0.2, dist: 16 };
+let dragging = false, lastX = 0, lastY = 0;
+canvas.addEventListener('pointerdown', e => { dragging = true; lastX = e.clientX; lastY = e.clientY; canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  cam.yaw += (e.clientX - lastX) * 0.008;
+  cam.pitch = Math.max(-0.05, Math.min(1.2, cam.pitch + (e.clientY - lastY) * 0.005));
+  lastX = e.clientX; lastY = e.clientY;
+});
+canvas.addEventListener('pointerup', e => { dragging = false; canvas.releasePointerCapture(e.pointerId); });
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  cam.dist = Math.max(4, Math.min(45, cam.dist * (1 + e.deltaY * 0.001)));
+}, { passive: false });
+
+// 물체마다 재질(색상, 광택 반사도)을 다르게 부여
+const OBJECTS = [
+  { at: [-3.5, 0.8, -1.0], r: 0.8, col: [0.25, 0.25, 0.28], shin:  8,  ks: 0.05 }, // 일반 심해 암석
+  { at: [-1.0, 1.5,  1.0], r: 1.2, col: [0.20, 0.50, 0.40], shin:  20, ks: 0.20 }, // 해초 낀 바위
+  { at: [ 2.2, 1.2, -0.5], r: 1.0, col: [0.70, 0.90, 0.95], shin: 120, ks: 0.85 }, // 수정 기둥 (고광택)
+  { at: [ 4.5, 0.5,  1.5], r: 0.5, col: [0.30, 0.22, 0.20], shin:  10, ks: 0.08 }, // 작은 광물
+];
+
+const startTime = performance.now();
+function draw(mesh, model, color, shin, ks, emissive) {
+  gl.uniformMatrix4fv(U.uModel, false, model);
+  gl.uniformMatrix3fv(U.uNormalMat, false, Mat4.normalFromMat4(model));
+  gl.uniform3fv(U.uBaseColor, color);
+  gl.uniform1f(U.uShininess, shin);
+  gl.uniform1f(U.uKs, ks);
+  gl.uniform1i(U.uEmissive, emissive ? 1 : 0);
+  gl.bindVertexArray(mesh.vao);
+  gl.drawElements(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0);
+}
+
+function render() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.floor(canvas.clientWidth * dpr), h = Math.floor(canvas.clientHeight * dpr);
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0.01, 0.02, 0.04, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  const t = (performance.now() - startTime) / 1000;
+
+  const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+  const eye = [Math.sin(cam.yaw)*cp*cam.dist, sp*cam.dist + 1.5, Math.cos(cam.yaw)*cp*cam.dist];
+  const view = Mat4.lookAt(eye, [0, 1.0, 0], [0, 1, 0]);
+  const proj = Mat4.perspective(Math.PI/4, canvas.width/canvas.height, 0.1, 300);
+
+  // ① 마그마 위치 (서서히 움직임)
+  const magmaPos = [-4.0, 0.5 + Math.sin(t * 0.8) * 0.2, -3.0];
+  // ③ 탐수정 서치라이트 위치 및 방향
+  const spotPos = [Math.sin(t * 0.4) * 3.0, 4.0, 4.0];
+  const aim = [Math.sin(t * 0.4 + 1.0) * 2.0, 0.5, 0.0];
+  const spotDir = [aim[0]-spotPos[0], aim[1]-spotPos[1], aim[2]-spotPos[2]];
+
+  gl.useProgram(program);
+  gl.uniformMatrix4fv(U.uView, false, view);
+  gl.uniformMatrix4fv(U.uProj, false, proj);
+  gl.uniform3fv(U.uViewPos, eye);
+
+  // 조명 파라미터 전달 (따뜻한 마그마 vs 차가운 달빛)
+  gl.uniform3fv(U.uMagmaPos, magmaPos);
+  gl.uniform3f(U.uMagmaColor, 4.2, 1.3, 0.3);          // 따뜻한 주황빛 마그마
+  gl.uniform3f(U.uMoonDir, 0.4, -0.8, 0.5);
+  gl.uniform3f(U.uMoonColor, 0.12, 0.35, 0.55);        // 차가운 청록색 달빛
+  gl.uniform3fv(U.uSpotPos, spotPos);
+  gl.uniform3fv(U.uSpotDir, spotDir);
+  gl.uniform3f(U.uSpotColor, 4.0, 4.0, 3.8);           // 밝은 전조등
+  gl.uniform1f(U.uCosIn,  Math.cos(12 * Math.PI / 180));
+  gl.uniform1f(U.uCosOut, Math.cos(20 * Math.PI / 180));
+
+  gl.uniform1i(U.uOn1, on.l1 ? 1 : 0);
+  gl.uniform1i(U.uOn2, on.l2 ? 1 : 0);
+  gl.uniform1i(U.uOn3, on.l3 ? 1 : 0);
+
+  // 해저 지형 렌더링 (어두운 모래/현무암 색상)
+  draw(plane, Mat4.identity(), [0.15, 0.18, 0.22], 6, 0.03, false);
+
+  // 주변 구조물 및 수정 렌더링
+  for (let i = 0; i < OBJECTS.length; i++) {
+    const obj = OBJECTS[i];
+    let m = Mat4.multiply(Mat4.translate(obj.at[0], obj.at[1], obj.at[2]), Mat4.rotateY(t * 0.1));
+    m = Mat4.multiply(m, Mat4.scale(obj.r, obj.r * 1.2, obj.r));
+    draw(sphere, m, obj.col, obj.shin, obj.ks, false);
+  }
+
+  // 마그마 발광체 표시
+  if (on.l1) {
+    draw(sphere, Mat4.multiply(Mat4.translate(magmaPos[0], magmaPos[1], magmaPos[2]),
+                 Mat4.scale(0.8, 0.8, 0.8)), [1.0, 0.35, 0.05], 1, 0, true);
+  }
+  // 탐수정 발광체 표시
+  if (on.l3) {
+    draw(sphere, Mat4.multiply(Mat4.translate(spotPos[0], spotPos[1], spotPos[2]),
+                 Mat4.scale(0.2, 0.2, 0.2)), [0.9, 0.95, 1.0], 1, 0, true);
+  }
+
+  gl.bindVertexArray(null);
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+</script>
+</body>
+</html>

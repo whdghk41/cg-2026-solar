@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3주차 실습 2 예시 — 사이버틱 가스 행성 (수정본)</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #020408; /* 변경 이유: 우주 배경을 어두운 푸른빛/검은빛 계열로 변경하여 사이버틱한 네온 색상 대비를 극대화 */ }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="glcanvas"></canvas>
+
+<script>
+'use strict';
+
+// 구 메시 생성 함수 (기존 코드와 동일)
+function makeSphere(radius, rows, cols, r, g, b) {
+  const pos = [], nrm = [], col = [], idx = [];
+  for (let i = 0; i <= rows; i++) {
+    const phi = Math.PI * i / rows;
+    for (let j = 0; j <= cols; j++) {
+      const th = 2 * Math.PI * j / cols;
+      const nx = Math.sin(phi) * Math.cos(th);
+      const ny = Math.cos(phi);
+      const nz = Math.sin(phi) * Math.sin(th);
+      pos.push(nx*radius, ny*radius, nz*radius);
+      nrm.push(nx, ny, nz);
+      col.push(r, g, b);
+    }
+  }
+  const stride = cols + 1;
+  for (let i = 0; i < rows; i++) {
+    for (let j = 0; j < cols; j++) {
+      const a = i*stride + j, b2 = a + stride;
+      idx.push(a, b2, a+1, a+1, b2, b2+1);
+    }
+  }
+  return { positions: new Float32Array(pos), normals: new Float32Array(nrm),
+           colors: new Float32Array(col), indices: new Uint16Array(idx) };
+}
+
+// 버텍스 셰이더 (기존 코드와 동일)
+const VS_SOURCE = `#version 300 es
+
+layout(location=0) in vec3 aPos;
+layout(location=1) in vec3 aNormal;
+layout(location=3) in vec3 aColor;
+
+uniform float uTime;
+uniform mat4  uModel;
+uniform mat4  uViewProj;
+
+out vec3 vColor;
+out vec3 vNormal;
+out vec3 vSurf;
+
+void main() {
+  vColor  = aColor;
+  vNormal = mat3(uModel) * aNormal;
+  vSurf   = aNormal;
+  gl_Position = uViewProj * uModel * vec4(aPos, 1.0);
+}
+`;
+
+/* ══════════════════════════════════════════════════════════════════════════
+   프래그먼트 셰이더 — 사이버틱 네온 스타일로 전면 수정된 부분
+   ══════════════════════════════════════════════════════════════════════════ */
+const FS_SOURCE = `#version 300 es
+precision highp float;
+
+in vec3 vColor;
+in vec3 vNormal;
+in vec3 vSurf;
+
+uniform float uTime;
+
+out vec4 fragColor;
+
+// 난수 및 노이즈 함수 (기존과 동일하게 절차적 무늬 생성에 사용)
+float hash31(vec3 p) {
+  p = fract(p * 0.3183099 + vec3(0.71, 0.113, 0.419));
+  p *= 17.0;
+  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+
+float noise3(vec3 x) {
+  vec3 i = floor(x), f = fract(x);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(hash31(i + vec3(0,0,0)), hash31(i + vec3(1,0,0)), f.x),
+                 mix(hash31(i + vec3(0,1,0)), hash31(i + vec3(1,1,0)), f.x), f.y),
+             mix(mix(hash31(i + vec3(0,0,1)), hash31(i + vec3(1,0,1)), f.x),
+                 mix(hash31(i + vec3(0,1,1)), hash31(i + vec3(1,1,1)), f.x), f.y), f.z);
+}
+
+float fbm(vec3 p) {
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i < 4; i++) { v += a * noise3(p); p *= 2.1; a *= 0.5; }
+  return v;
+}
+
+void main() {
+  vec3 N = normalize(vNormal);
+  vec3 S = normalize(vSurf);
+  vec3 L = normalize(vec3(0.8, 0.32, 0.5));
+  float diff = max(dot(N, L), 0.0);
+
+  float lat = S.y;
+
+  /* [변경 1] 사이버틱 회로/데이터 흐름 패턴 생성
+     이유: 기존 갈색 기체 띠 대신 디지털 회로나 데이터 스트림 같은 결이 느껴지도록
+     노이즈 주파수와 배합 방식을 변경했습니다. */
+  float cyberSwirl = fbm(S * 4.0 + vec3(0.0, uTime * 0.2, 0.0)) - 0.5;
+  float circuitPattern = sin(lat * 30.0 + cyberSwirl * 10.0);
+
+  /* [변경 2] 네온 컬러 팔레트 정의
+     이유: 우주적이고 기계적인 느낌을 내기 위해 갈색/노란색 톤을 제거하고
+     다크 보이드(어두운 심해색), 일렉트릭 퍼플(보라색), 네온 사이안(청록빛 하늘색)으로 교체했습니다. */
+  vec3 neonCyan   = vec3(0.0, 0.9, 1.0);
+  vec3 neonPurple = vec3(0.6, 0.1, 0.9);
+  vec3 darkVoid   = vec3(0.02, 0.05, 0.12);
+
+  vec3 albedo = mix(darkVoid, neonPurple, smoothstep(-0.4, 0.2, circuitPattern));
+  albedo = mix(albedo, neonCyan, smoothstep(0.2, 0.8, circuitPattern));
+
+  /* [변경 3] 홀로그램 스캔라인 (CRT 모니터/홀로그램 효과)
+     이유: 화면 좌표(gl_FragCoord.y)에 시간에 따른 삼각함수를 더해
+     위에서 아래로 미세한 가로줄(스캔라인)이 흐르도록 하여 SF 홀로그램 같은 느낌을 부여했습니다. */
+  float scanline = sin(gl_FragCoord.y * 0.5 + uTime * 5.0);
+  albedo += neonCyan * max(scanline, 0.0) * 0.25;
+
+  /* [변경 4] 에너지 코어 및 펄스 링 추가
+     이유: 기존 폭풍 위치에 에너지가 맥동하듯 주기적으로 반짝이는 효과를 넣어
+     행성이 살아있는 에너지원처럼 보이게 만들었습니다. */
+  vec3 corePos = normalize(vec3(0.0, 0.0, 1.0));
+  float coreDist = distance(S, corePos);
+  float pulse = sin(uTime * 4.0 - coreDist * 12.0) * 0.5 + 0.5;
+  
+  vec3 energyCore = vec3(0.1, 1.0, 0.6); // 네온 그린 에너지 컬러
+  albedo = mix(albedo, energyCore, smoothstep(0.4, 0.0, coreDist) * pulse * 0.9);
+
+  /* [변경 5] 프레넬 림 라이트 (테두리 빛 번짐)
+     이유: 행성 가장자리로 갈수록 빛이 은은하게 감싸는 효과(프레넬 반사)를 주어
+     공중에 떠 있는 홀로그램 구체 같은 입체감을 극대화했습니다. */
+  vec3 viewDir = normalize(vec3(0.0, 0.0, 1.0));
+  float rim = 1.0 - max(dot(N, viewDir), 0.0);
+  rim = pow(rim, 2.5);
+  
+  // 자체 발광하는 느낌을 주기 위해 확산 반사(diffuse) 비중을 낮추고 테두리 림 라이트를 더함
+  vec3 color = albedo * (0.4 + 0.6 * diff) + (neonCyan * rim * 0.8);
+  
+  fragColor = vec4(color, 1.0);
+}
+`;
+
+// WebGL 초기화 및 렌더링 로직 (기존과 동일)
+const canvas = document.getElementById('glcanvas');
+const gl = canvas.getContext('webgl2');
+if (!gl) {
+  document.body.innerHTML = '<p style="color:#fff;font:16px sans-serif;padding:2rem">WebGL2를 지원하지 않습니다.</p>';
+  throw new Error('no webgl2');
+}
+
+function compileShader(type, source) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, source);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    throw new Error('셰이더 컴파일 오류\n' + gl.getShaderInfoLog(s));
+  }
+  return s;
+}
+
+function createProgram(vsSource, fsSource) {
+  const p = gl.createProgram();
+  gl.attachShader(p, compileShader(gl.VERTEX_SHADER, vsSource));
+  gl.attachShader(p, compileShader(gl.FRAGMENT_SHADER, fsSource));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+    throw new Error('프로그램 링크 오류\n' + gl.getProgramInfoLog(p));
+  }
+  return p;
+}
+
+const program = createProgram(VS_SOURCE, FS_SOURCE);
+
+const uTimeLoc = gl.getUniformLocation(program, 'uTime');
+const uModelLoc = gl.getUniformLocation(program, 'uModel');
+const uViewProjLoc = gl.getUniformLocation(program, 'uViewProj');
+
+const M4 = {};
+M4.identity = () => new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
+M4.translate = (tx, ty, tz) => new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, tx,ty,tz,1]);
+M4.scale = (sx, sy, sz) => new Float32Array([sx,0,0,0, 0,sy,0,0, 0,0,sz,0, 0,0,0,1]);
+M4.rotateX = (angle) => {
+  const c = Math.cos(angle), s = Math.sin(angle);
+  return new Float32Array([1,0,0,0, 0,c,s,0, 0,-s,c,0, 0,0,0,1]);
+};
+M4.rotateY = (angle) => {
+  const c = Math.cos(angle), s = Math.sin(angle);
+  return new Float32Array([c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]);
+};
+M4.multiply = (a, b) => {
+  const out = new Float32Array(16);
+  for (let col = 0; col < 4; col++) {
+    for (let row = 0; row < 4; row++) {
+      let sum = 0;
+      for (let k = 0; k < 4; k++) sum += a[k * 4 + row] * b[col * 4 + k];
+      out[col * 4 + row] = sum;
+    }
+  }
+  return out;
+};
+
+function createMesh(mesh) {
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+
+  function attribute(data, location, size) {
+    if (!data) return;
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(location);
+    gl.vertexAttribPointer(location, size, gl.FLOAT, false, 0, 0);
+  }
+  attribute(mesh.positions, 0, 3);
+  attribute(mesh.normals, 1, 3);
+  attribute(mesh.colors, 3, 3);
+
+  const ibo = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
+
+  gl.bindVertexArray(null);
+  return { vao, count: mesh.indices.length };
+}
+
+const planet = createMesh(makeSphere(1.3, 64, 128, 1, 1, 1));
+const SPIN = 0.16;
+const startTime = performance.now();
+
+function render() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.floor(canvas.clientWidth * dpr);
+  const h = Math.floor(canvas.clientHeight * dpr);
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+  gl.viewport(0, 0, canvas.width, canvas.height);
+
+  gl.enable(gl.DEPTH_TEST);
+  gl.clearColor(0.01, 0.02, 0.04, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  const time = (performance.now() - startTime) / 1000;
+  const aspect = canvas.width / canvas.height;
+
+  let camera = M4.identity();
+  camera = M4.multiply(M4.translate(0, 0, -4), camera);
+
+  const perspective = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,-1/4, 0,0,0,1]);
+  camera = M4.multiply(perspective, camera);
+  camera = M4.multiply(M4.scale(1 / (1.45 * aspect), 1 / 1.45, -1 / 20), camera);
+
+  gl.useProgram(program);
+  gl.uniform1f(uTimeLoc, time);
+  gl.uniformMatrix4fv(uViewProjLoc, false, camera);
+
+  const model = M4.multiply(M4.rotateX(0.32), M4.rotateY(time * SPIN));
+  gl.uniformMatrix4fv(uModelLoc, false, model);
+  gl.bindVertexArray(planet.vao);
+  gl.drawElements(gl.TRIANGLES, planet.count, gl.UNSIGNED_SHORT, 0);
+  gl.bindVertexArray(null);
+
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
