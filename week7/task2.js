@@ -242,6 +242,10 @@
     gl.bindVertexArray(null);
   }
   function median(a){const b=[...a].sort((x,y)=>x-y);return b[Math.floor(b.length/2)];}
+  function percentile(a,p){
+    const b=[...a].sort((x,y)=>x-y);
+    return b[Math.ceil(p*b.length)-1];
+  }
   const names=['Local','Ray tracing','Path tracing'];
   const status=document.querySelector('#status'),result=document.querySelector('#result');
   const timer=gl.getExtension('EXT_disjoint_timer_query_webgl2');
@@ -279,38 +283,36 @@
     controls.forEach(control=>{control.disabled=true;});
     const profile=document.querySelector('#profile');
     const budget=1000/30;
-    let best=qualityProfiles[0],bestTime=null,previousTime=null;
+    let best=qualityProfiles[0],bestTime=null,tested=false;
     profile.textContent='이 기기의 그래픽 성능을 측정해 화질을 자동으로 설정합니다.';
     result.textContent='Path tracing 부하를 단계별로 확인 중…';
     try{
       for(const candidate of qualityProfiles){
-        if(previousTime!==null){
-          const previous=qualityProfiles[qualityProfiles.indexOf(best)];
-          const workRatio=(Number(candidate.resolution)/Number(previous.resolution))**2
-            *(Number(candidate.samples)/Number(previous.samples))
-            *((1+Number(candidate.bounces))/(1+Number(previous.bounces)));
-          if(previousTime*workRatio>budget*1.5)break;
-        }
         applyQuality(candidate);
-        await timedDraw(2);
+        await timedDraw(2); // exclude shader setup and first-draw overhead
         const times=[];
-        for(let trial=0;trial<3;trial++)times.push(await timedDraw(2));
-        const elapsed=median(times);
+        for(let trial=0;trial<5;trial++)times.push(await timedDraw(2));
+        tested=true;
+        const elapsed=percentile(times,0.8);
         if(elapsed>budget)break;
         best=candidate;
         bestTime=elapsed;
-        previousTime=elapsed;
       }
       applyQuality(best);
       const dimensions=`${best.resolution}×${Number(best.resolution)*9/16}`;
       profile.textContent=`자동 화질: ${best.name} · ${dimensions} · ${best.samples}표본 · ${best.bounces}회 반사 · 고급 효과 ${best.advanced?'켬':'끔'}`;
-      status.textContent=`이 기기의 Path tracing 측정값 ${bestTime===null?'확인 불가':bestTime.toFixed(2)+' ms/frame'} · 목표 30 FPS`;
-      result.textContent='페이지를 열 때마다 현재 기기에서 다시 측정합니다. 수동으로 설정을 바꿀 수도 있습니다.';
+      status.textContent=bestTime===null
+        ?`30 FPS 기준을 만족한 화질이 없어 최소 설정을 적용했습니다 · 기준 ${budget.toFixed(1)} ms/frame`
+        :`Path tracing 80백분위 ${bestTime.toFixed(2)} ms/frame · 목표 ${budget.toFixed(1)} ms/frame (30 FPS)`;
+      result.textContent=bestTime===null
+        ?`각 화질을 준비 렌더 1회 후 5회 측정했지만, 최소 설정도 30 FPS 기준을 만족하지 못했습니다.${!tested?' 자동 측정값이 없어 최소 설정을 적용했습니다.':''} 직접 설정도 변경할 수 있습니다.`
+        :'각 화질을 준비 렌더 1회 후 5회 측정합니다. 5회 중 4회 이상이 30 FPS 기준을 만족하는 가장 높은 화질을 선택했습니다. 직접 설정도 변경할 수 있습니다.';
     }catch(error){
-      applyQuality(qualityProfiles[0]);
-      profile.textContent='자동 화질 측정에 실패해 절전 설정을 적용했습니다.';
-      status.textContent='자동 측정 오류';
-      result.textContent=error.message;
+      applyQuality(best);
+      const dimensions=`${best.resolution}×${Number(best.resolution)*9/16}`;
+      profile.textContent=`자동 측정 중 오류 · ${best.name} 설정 적용 · ${dimensions} · ${best.samples}표본 · ${best.bounces}회 반사`;
+      status.textContent=bestTime===null?'성능 기준을 확인하지 못해 절전 설정을 적용했습니다.':`마지막 통과 화질의 Path tracing 80백분위 ${bestTime.toFixed(2)} ms/frame`;
+      result.textContent=`자동 화질 측정 오류: ${error.message} ${bestTime===null?'': '마지막으로 기준을 통과한 설정을 적용했습니다.'}`;
     }finally{
       draw(Number(S.mode));
       lastKey=[S.mode,S.resolution,S.samples,S.bounces,S.advanced].join('|');
