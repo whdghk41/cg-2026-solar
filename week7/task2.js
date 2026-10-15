@@ -282,7 +282,8 @@
     button.disabled=true;
     controls.forEach(control=>{control.disabled=true;});
     const profile=document.querySelector('#profile');
-    const budget=1000/30;
+    const targetFps=60;
+    const budget=1000/targetFps;
     let best=qualityProfiles[0],bestTime=null,tested=false;
     profile.textContent='이 기기의 그래픽 성능을 측정해 화질을 자동으로 설정합니다.';
     result.textContent='Path tracing 부하를 단계별로 확인 중…';
@@ -302,11 +303,11 @@
       const dimensions=`${best.resolution}×${Number(best.resolution)*9/16}`;
       profile.textContent=`자동 화질: ${best.name} · ${dimensions} · ${best.samples}표본 · ${best.bounces}회 반사 · 고급 효과 ${best.advanced?'켬':'끔'}`;
       status.textContent=bestTime===null
-        ?`30 FPS 기준을 만족한 화질이 없어 최소 설정을 적용했습니다 · 기준 ${budget.toFixed(1)} ms/frame`
-        :`Path tracing 80백분위 ${bestTime.toFixed(2)} ms/frame · 목표 ${budget.toFixed(1)} ms/frame (30 FPS)`;
+        ?`60 FPS 기준을 만족한 화질이 없어 최소 설정을 적용했습니다 · 기준 ${budget.toFixed(1)} ms/frame`
+        :`Path tracing 80백분위 ${bestTime.toFixed(2)} ms/frame · 목표 ${budget.toFixed(1)} ms/frame (${targetFps} FPS)`;
       result.textContent=bestTime===null
-        ?`각 화질을 준비 렌더 1회 후 5회 측정했지만, 최소 설정도 30 FPS 기준을 만족하지 못했습니다.${!tested?' 자동 측정값이 없어 최소 설정을 적용했습니다.':''} 직접 설정도 변경할 수 있습니다.`
-        :'각 화질을 준비 렌더 1회 후 5회 측정합니다. 5회 중 4회 이상이 30 FPS 기준을 만족하는 가장 높은 화질을 선택했습니다. 직접 설정도 변경할 수 있습니다.';
+        ?`각 화질을 준비 렌더 1회 후 5회 측정했지만, 최소 설정도 60 FPS 기준을 만족하지 못했습니다.${!tested?' 자동 측정값이 없어 최소 설정을 적용했습니다.':''} 직접 설정도 변경할 수 있습니다.`
+        :'각 화질을 준비 렌더 1회 후 5회 측정합니다. 5회 중 4회 이상이 60 FPS 기준을 만족하는 가장 높은 화질을 선택했습니다. 직접 설정도 변경할 수 있습니다.';
     }catch(error){
       applyQuality(best);
       const dimensions=`${best.resolution}×${Number(best.resolution)*9/16}`;
