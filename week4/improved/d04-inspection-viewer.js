@@ -50,17 +50,44 @@
   gl.enable(gl.DEPTH_TEST);
   let started=null,last='';
   const api={canvas,gl,model,controls,hidden,drawView,render:null};window.InspectionViewer=api;
-  let currentStop='전체 지도';
-  function resetOverview(){currentStop='전체 지도';controls.home();controls.state.actions++;}
+  let currentStop='전체 지도',currentComparison=null;
+  function resetOverview(){currentStop='전체 지도';currentComparison=null;controls.home();controls.state.actions++;}
   document.querySelector('#home').addEventListener('click',resetOverview);
   canvas.addEventListener('keydown',e=>{if(e.key==='Home')resetOverview();});
   document.querySelectorAll('[data-destination]').forEach(button=>{
     button.addEventListener('click',()=>{
       const destination=model.poi.find(point=>point.id===button.dataset.destination);
       if(!destination)return;
+      currentComparison=null;
       const distance=Math.max(1.2,Math.max(...destination.size)*2.8);
       controls.focus(destination.position,destination.yaw,distance);
       currentStop=`${destination.id} ${destination.name}`;
+    });
+  });
+  document.querySelectorAll('[data-comparison]').forEach(button=>{
+    button.addEventListener('click',()=>{
+      const comparison=model.comparisons.find(item=>item.id===button.dataset.comparison);
+      if(!comparison)return;
+      const yaw=Math.atan2(-comparison.viewDirection[0],-comparison.viewDirection[2]);
+      const members=model.boxes.filter(box=>comparison.members.includes(box.id));
+      const right=[Math.cos(yaw),0,-Math.sin(yaw)];
+      const horizontalBounds=members.reduce((bounds,box)=>{
+        const center=box.position[0]*right[0]+box.position[2]*right[2];
+        const extent=(Math.abs(right[0])*box.size[0]+Math.abs(right[2])*box.size[2])/2;
+        return [Math.min(bounds[0],center-extent),Math.max(bounds[1],center+extent)];
+      },[Infinity,-Infinity]);
+      const verticalBounds=members.reduce((bounds,box)=>[
+        Math.min(bounds[0],box.position[1]-box.size[1]/2),
+        Math.max(bounds[1],box.position[1]+box.size[1]/2)
+      ],[Infinity,-Infinity]);
+      const horizontalSpan=horizontalBounds[1]-horizontalBounds[0];
+      const verticalSpan=verticalBounds[1]-verticalBounds[0];
+      const aspect=canvas.clientWidth/Math.max(1,canvas.clientHeight);
+      const halfHeight=Math.max(verticalSpan,horizontalSpan/aspect)*0.6;
+      controls.focus(comparison.position,yaw,Math.max(10,halfHeight*4),0);
+      currentComparison={halfHeight,distance:controls.state.distance};
+      currentStop=`${comparison.id} ${comparison.name}`;
+      canvas.focus();
     });
   });
   document.querySelector('#measure').addEventListener('click',()=>{started=performance.now();controls.state.actions=0;});
@@ -68,7 +95,15 @@
   D.loop(()=>{
     const r=canvas.getBoundingClientRect(),dpr=Math.min(devicePixelRatio||1,2),w=Math.max(1,Math.round(r.width*dpr)),h=Math.max(1,Math.round(r.height*dpr));
     if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
-    if(api.render)api.render(api);else drawView(controls.camera());
+    if(api.render)api.render(api);
+    else {
+      const camera=controls.camera();
+      drawView(currentComparison?{
+        ...camera,
+        orthographic:true,
+        halfHeight:currentComparison.halfHeight*controls.state.distance/currentComparison.distance
+      }:camera);
+    }
     const s=controls.state,value=`현재 위치 ${currentStop}\n대상 중심 회전 · 거리 ${s.distance.toFixed(2)}m · FOV ${s.fov}°\n회전 중심 (${s.target.map(v=>v.toFixed(2)).join(', ')})\n측정 ${started===null?'시작 전':((performance.now()-started)/1000).toFixed(0)+'초'} · 조작 ${s.actions}회`;
     if(value!==last){read.textContent=value;last=value;}
   });

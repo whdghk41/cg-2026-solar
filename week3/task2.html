@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>3주차 실습 2 예시 — 사이버틱 가스 행성 (수정본)</title>
+<title>3주차 실습 2 예시 — 가스 행성</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #020408; /* 변경 이유: 우주 배경을 어두운 푸른빛/검은빛 계열로 변경하여 사이버틱한 네온 색상 대비를 극대화 */ }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f16; }
   canvas { display: block; width: 100vw; height: 100vh; }
 </style>
 </head>
@@ -13,20 +13,39 @@
 <canvas id="glcanvas"></canvas>
 
 <script>
+/* ============================================================================
+   3주차 실습 1 — 출발점 파일
+
+   삼각형 하나를 그리는 가장 작은 WebGL2 프로그램입니다.
+   이 파일 하나에 세 개의 프로그램이 모두 들어 있습니다.
+
+     ① 메인 애플리케이션 — 이 <script> 안의 JavaScript (CPU 에서 실행)
+     ② 버텍스 셰이더    — 아래 VS_SOURCE 문자열     (GPU 에서 실행)
+     ③ 프래그먼트 셰이더 — 아래 FS_SOURCE 문자열     (GPU 에서 실행)
+
+   강의 자료의 「실습 1」 을 보며 단계별로 고쳐 나가면 됩니다.
+   ============================================================================ */
 'use strict';
 
-// 구 메시 생성 함수 (기존 코드와 동일)
+/* ══════════════════════════════════════════════════════════════════════════
+   1. 메시 데이터 — 이 숫자들이 전부입니다
+   ──────────────────────────────────────────────────────────────────────────
+   각 버퍼의 "같은 번째" 값이 같은 정점의 정보입니다.
+   예를 들어 정점 0 은 위치 (-0.75,-0.55,0), 법선 (0,0,1), 색 (0.92,0.35,0.32).
+   ══════════════════════════════════════════════════════════════════════════ */
+
+// 구 — 위도 rows 칸, 경도 cols 칸으로 잘라 삼각형으로 만든다
 function makeSphere(radius, rows, cols, r, g, b) {
   const pos = [], nrm = [], col = [], idx = [];
   for (let i = 0; i <= rows; i++) {
-    const phi = Math.PI * i / rows;
+    const phi = Math.PI * i / rows;                  // 0(북극) ~ π(남극)
     for (let j = 0; j <= cols; j++) {
       const th = 2 * Math.PI * j / cols;
       const nx = Math.sin(phi) * Math.cos(th);
       const ny = Math.cos(phi);
       const nz = Math.sin(phi) * Math.sin(th);
       pos.push(nx*radius, ny*radius, nz*radius);
-      nrm.push(nx, ny, nz);
+      nrm.push(nx, ny, nz);                          // 구의 법선은 곧 방향벡터
       col.push(r, g, b);
     }
   }
@@ -41,7 +60,66 @@ function makeSphere(radius, rows, cols, r, g, b) {
            colors: new Float32Array(col), indices: new Uint16Array(idx) };
 }
 
-// 버텍스 셰이더 (기존 코드와 동일)
+function makeBox(sx, sy, sz, r, g, b) {
+  const x = sx / 2;
+  const y = sy / 2;
+  const z = sz / 2;
+
+  // 결과를 담을 빈 배열 네 개
+  const positions = [];
+  const normals = [];
+  const colors = [];
+  const indices = [];
+
+  // 면 하나를 추가하는 함수.
+  // 꼭짓점 4개를 반시계 방향으로 주고, 그 면이 향하는 방향(법선)을 함께 줍니다.
+  function addFace(p0, p1, p2, p3, nx, ny, nz) {
+    // 지금까지 넣은 정점이 몇 개인지 = 이 면의 첫 정점 번호
+    const first = positions.length / 3;
+
+    // ① 꼭짓점 4개의 위치
+    positions.push(p0[0], p0[1], p0[2]);
+    positions.push(p1[0], p1[1], p1[2]);
+    positions.push(p2[0], p2[1], p2[2]);
+    positions.push(p3[0], p3[1], p3[2]);
+
+    // ② 법선 — 네 꼭짓점 모두 같은 값입니다 (그래서 꼭짓점을 공유하지 않고 복제합니다)
+    normals.push(nx, ny, nz);
+    normals.push(nx, ny, nz);
+    normals.push(nx, ny, nz);
+    normals.push(nx, ny, nz);
+
+    // ③ 색 — 위를 향한 면을 조금 밝게 해서 입체가 보이게 합니다
+    const shade = 0.75 + 0.25 * ny;
+    colors.push(r * shade, g * shade, b * shade);
+    colors.push(r * shade, g * shade, b * shade);
+    colors.push(r * shade, g * shade, b * shade);
+    colors.push(r * shade, g * shade, b * shade);
+
+    // ④ 사각형 하나는 삼각형 두 개로 만듭니다
+    indices.push(first + 0, first + 1, first + 2);
+    indices.push(first + 0, first + 2, first + 3);
+  }
+
+  //          꼭짓점 4개를 반시계 방향으로                                법선        어느 면
+  addFace([-x, -y,  z], [ x, -y,  z], [ x,  y,  z], [-x,  y,  z],   0,  0,  1);  // 앞
+  addFace([ x, -y, -z], [-x, -y, -z], [-x,  y, -z], [ x,  y, -z],   0,  0, -1);  // 뒤
+  addFace([ x, -y,  z], [ x, -y, -z], [ x,  y, -z], [ x,  y,  z],   1,  0,  0);  // 오른쪽
+  addFace([-x, -y, -z], [-x, -y,  z], [-x,  y,  z], [-x,  y, -z],  -1,  0,  0);  // 왼쪽
+  addFace([-x,  y,  z], [ x,  y,  z], [ x,  y, -z], [-x,  y, -z],   0,  1,  0);  // 위
+  addFace([-x, -y, -z], [ x, -y, -z], [ x, -y,  z], [-x, -y,  z],   0, -1,  0);  // 아래
+
+  return {
+    positions: new Float32Array(positions),
+    normals:   new Float32Array(normals),
+    colors:    new Float32Array(colors),
+    indices:   new Uint16Array(indices),
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   2. 버텍스 셰이더 — 정점 하나마다 한 번씩 실행됩니다
+   ══════════════════════════════════════════════════════════════════════════ */
 const VS_SOURCE = `#version 300 es
 
 layout(location=0) in vec3 aPos;
@@ -53,50 +131,54 @@ uniform mat4  uModel;
 uniform mat4  uViewProj;
 
 out vec3 vColor;
-out vec3 vNormal;
-out vec3 vSurf;
+out vec3 vNormal;    // 세계 기준 법선 — 빛 계산에 쓴다
+out vec3 vSurf;      // 물체 기준 법선 — 무늬가 행성에 "붙어" 돌게 한다
 
 void main() {
   vColor  = aColor;
   vNormal = mat3(uModel) * aNormal;
-  vSurf   = aNormal;
+  vSurf   = aNormal;                  // 돌리기 전 값이라 무늬가 표면에 고정된다
   gl_Position = uViewProj * uModel * vec4(aPos, 1.0);
 }
 `;
 
 /* ══════════════════════════════════════════════════════════════════════════
-   프래그먼트 셰이더 — 사이버틱 네온 스타일로 전면 수정된 부분
+   3. 프래그먼트 셰이더 — 픽셀 하나마다 한 번씩 실행됩니다
    ══════════════════════════════════════════════════════════════════════════ */
 const FS_SOURCE = `#version 300 es
 precision highp float;
 
 in vec3 vColor;
-in vec3 vNormal;
-in vec3 vSurf;
+in vec3 vNormal;      // 세계 기준 법선 — 빛 계산에 쓴다
+in vec3 vSurf;        // 물체 기준 법선 — 무늬가 표면에 붙어 돌게 한다
 
 uniform float uTime;
 
 out vec4 fragColor;
 
-// 난수 및 노이즈 함수 (기존과 동일하게 절차적 무늬 생성에 사용)
+/* ── 잡음 만들기 ───────────────────────────────────────────────
+   이미지 파일 없이 무늬를 만들려면 "규칙적이지 않아 보이는 숫자"가 필요합니다.
+   아래는 좌표를 넣으면 언제나 같은 0~1 값을 돌려주는 가짜 난수입니다.        */
 float hash31(vec3 p) {
   p = fract(p * 0.3183099 + vec3(0.71, 0.113, 0.419));
   p *= 17.0;
   return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
 }
 
+// 격자 꼭짓점의 난수를 부드럽게 섞어 "덩어리진" 잡음을 만듭니다
 float noise3(vec3 x) {
   vec3 i = floor(x), f = fract(x);
-  f = f * f * (3.0 - 2.0 * f);
+  f = f * f * (3.0 - 2.0 * f);                 // 부드럽게 (smoothstep 과 같은 곡선)
   return mix(mix(mix(hash31(i + vec3(0,0,0)), hash31(i + vec3(1,0,0)), f.x),
                  mix(hash31(i + vec3(0,1,0)), hash31(i + vec3(1,1,0)), f.x), f.y),
              mix(mix(hash31(i + vec3(0,0,1)), hash31(i + vec3(1,0,1)), f.x),
                  mix(hash31(i + vec3(0,1,1)), hash31(i + vec3(1,1,1)), f.x), f.y), f.z);
 }
 
+// 크기가 다른 잡음을 여러 겹 더합니다 → 큰 덩어리와 잔 무늬가 함께 생깁니다
 float fbm(vec3 p) {
   float v = 0.0, a = 0.5;
-  for (int i = 0; i < 4; i++) { v += a * noise3(p); p *= 2.1; a *= 0.5; }
+  for (int i = 0; i < 5; i++) { v += a * noise3(p); p *= 2.02; a *= 0.5; }
   return v;
 }
 
@@ -106,113 +188,178 @@ void main() {
   vec3 L = normalize(vec3(0.8, 0.32, 0.5));
   float diff = max(dot(N, L), 0.0);
 
-  float lat = S.y;
+  vec2 uv = vec2(atan(S.z, S.x) / 6.2831853 + 0.5,
+                 asin(clamp(S.y, -1.0, 1.0)) / 3.14159265 + 0.5);
+  vec2 panel = uv * vec2(42.0, 22.0);
+  vec2 cell = fract(panel);
+  vec2 id = floor(panel);
+  float aa = max(fwidth(cell.x), fwidth(cell.y)) * 1.5;
 
-  /* [변경 1] 사이버틱 회로/데이터 흐름 패턴 생성
-     이유: 기존 갈색 기체 띠 대신 디지털 회로나 데이터 스트림 같은 결이 느껴지도록
-     노이즈 주파수와 배합 방식을 변경했습니다. */
-  float cyberSwirl = fbm(S * 4.0 + vec3(0.0, uTime * 0.2, 0.0)) - 0.5;
-  float circuitPattern = sin(lat * 30.0 + cyberSwirl * 10.0);
+  float row = 1.0 - smoothstep(aa, aa * 2.5, abs(cell.y - 0.5));
+  float column = 1.0 - smoothstep(aa, aa * 2.5, abs(cell.x - 0.74));
+  float horizontal = row * step(0.12, cell.x) * (1.0 - step(0.74, cell.x));
+  float vertical = column * step(0.5, cell.y) * (1.0 - step(0.88, cell.y));
+  float branch = row * step(0.32, cell.x) * (1.0 - step(0.74, cell.x))
+               * (1.0 - smoothstep(aa, aa * 2.5, abs(cell.y - 0.18)))
+               * step(0.45, hash31(vec3(id, 1.0)));
+  float nodeA = 1.0 - smoothstep(0.035, 0.065, distance(cell, vec2(0.74, 0.5)));
+  float nodeB = 1.0 - smoothstep(0.035, 0.065, distance(cell, vec2(0.74, 0.88)));
+  float traces = clamp(horizontal + vertical + branch + nodeA + nodeB, 0.0, 1.0);
 
-  /* [변경 2] 네온 컬러 팔레트 정의
-     이유: 우주적이고 기계적인 느낌을 내기 위해 갈색/노란색 톤을 제거하고
-     다크 보이드(어두운 심해색), 일렉트릭 퍼플(보라색), 네온 사이안(청록빛 하늘색)으로 교체했습니다. */
-  vec3 neonCyan   = vec3(0.0, 0.9, 1.0);
-  vec3 neonPurple = vec3(0.6, 0.1, 0.9);
-  vec3 darkVoid   = vec3(0.02, 0.05, 0.12);
+  float edge = min(min(cell.x, 1.0 - cell.x), min(cell.y, 1.0 - cell.y));
+  float seams = 1.0 - smoothstep(aa, aa * 2.5, edge);
+  float surfaceNoise = fbm(S * 8.0 + vec3(0.0, uTime * 0.012, 0.0));
+  float plateNoise = noise3(S * 18.0);
+  vec3 metal = mix(vec3(0.012, 0.025, 0.055), vec3(0.035, 0.075, 0.12),
+                   smoothstep(0.25, 0.8, surfaceNoise));
+  metal *= 0.82 + 0.18 * plateNoise;
+  metal *= 1.0 - seams * 0.55;
 
-  vec3 albedo = mix(darkVoid, neonPurple, smoothstep(-0.4, 0.2, circuitPattern));
-  albedo = mix(albedo, neonCyan, smoothstep(0.2, 0.8, circuitPattern));
-
-  /* [변경 3] 홀로그램 스캔라인 (CRT 모니터/홀로그램 효과)
-     이유: 화면 좌표(gl_FragCoord.y)에 시간에 따른 삼각함수를 더해
-     위에서 아래로 미세한 가로줄(스캔라인)이 흐르도록 하여 SF 홀로그램 같은 느낌을 부여했습니다. */
-  float scanline = sin(gl_FragCoord.y * 0.5 + uTime * 5.0);
-  albedo += neonCyan * max(scanline, 0.0) * 0.25;
-
-  /* [변경 4] 에너지 코어 및 펄스 링 추가
-     이유: 기존 폭풍 위치에 에너지가 맥동하듯 주기적으로 반짝이는 효과를 넣어
-     행성이 살아있는 에너지원처럼 보이게 만들었습니다. */
-  vec3 corePos = normalize(vec3(0.0, 0.0, 1.0));
-  float coreDist = distance(S, corePos);
-  float pulse = sin(uTime * 4.0 - coreDist * 12.0) * 0.5 + 0.5;
-  
-  vec3 energyCore = vec3(0.1, 1.0, 0.6); // 네온 그린 에너지 컬러
-  albedo = mix(albedo, energyCore, smoothstep(0.4, 0.0, coreDist) * pulse * 0.9);
-
-  /* [변경 5] 프레넬 림 라이트 (테두리 빛 번짐)
-     이유: 행성 가장자리로 갈수록 빛이 은은하게 감싸는 효과(프레넬 반사)를 주어
-     공중에 떠 있는 홀로그램 구체 같은 입체감을 극대화했습니다. */
-  vec3 viewDir = normalize(vec3(0.0, 0.0, 1.0));
-  float rim = 1.0 - max(dot(N, viewDir), 0.0);
-  rim = pow(rim, 2.5);
-  
-  // 자체 발광하는 느낌을 주기 위해 확산 반사(diffuse) 비중을 낮추고 테두리 림 라이트를 더함
-  vec3 color = albedo * (0.4 + 0.6 * diff) + (neonCyan * rim * 0.8);
-  
+  float signal = 0.5 + 0.5 * sin(uTime * 2.4 + dot(id, vec2(0.71, 1.13)));
+  vec3 neon = mix(vec3(0.02, 0.95, 1.0), vec3(1.0, 0.08, 0.72),
+                  step(0.82, hash31(vec3(id, 2.0))));
+  float rim = pow(1.0 - max(dot(N, L), 0.0), 3.0);
+  vec3 color = metal * (0.16 + 0.84 * diff);
+  color += neon * traces * (0.55 + 0.65 * signal);
+  color += vec3(0.02, 0.28, 0.48) * rim * 0.75;
   fragColor = vec4(color, 1.0);
 }
 `;
 
-// WebGL 초기화 및 렌더링 로직 (기존과 동일)
+/* ══════════════════════════════════════════════════════════════════════════
+   4. WebGL 준비
+   ══════════════════════════════════════════════════════════════════════════ */
 const canvas = document.getElementById('glcanvas');
 const gl = canvas.getContext('webgl2');
 if (!gl) {
-  document.body.innerHTML = '<p style="color:#fff;font:16px sans-serif;padding:2rem">WebGL2를 지원하지 않습니다.</p>';
+  document.body.innerHTML =
+    '<p style="color:#fff;font:16px sans-serif;padding:2rem">' +
+    'WebGL2 를 사용할 수 없습니다. 최신 Chrome 또는 Edge 로 열어 주세요.</p>';
   throw new Error('no webgl2');
 }
 
+// 셰이더 문자열을 컴파일한다. 실패하면 오류에 "몇 줄"인지 나온다.
 function compileShader(type, source) {
   const s = gl.createShader(type);
   gl.shaderSource(s, source);
   gl.compileShader(s);
   if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
-    throw new Error('셰이더 컴파일 오류\n' + gl.getShaderInfoLog(s));
+    const kind = (type === gl.VERTEX_SHADER) ? '버텍스' : '프래그먼트';
+    throw new Error(kind + ' 셰이더 오류\n' + gl.getShaderInfoLog(s));
   }
   return s;
 }
 
+// 두 셰이더를 하나의 "프로그램" 으로 묶는다.
 function createProgram(vsSource, fsSource) {
   const p = gl.createProgram();
   gl.attachShader(p, compileShader(gl.VERTEX_SHADER, vsSource));
   gl.attachShader(p, compileShader(gl.FRAGMENT_SHADER, fsSource));
   gl.linkProgram(p);
   if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
-    throw new Error('프로그램 링크 오류\n' + gl.getProgramInfoLog(p));
+    throw new Error('링크 오류\n' + gl.getProgramInfoLog(p));
   }
   return p;
 }
 
 const program = createProgram(VS_SOURCE, FS_SOURCE);
 
+// uniform 의 "위치"를 이름으로 찾아 둔다. 매 프레임 찾으면 느리다.
 const uTimeLoc = gl.getUniformLocation(program, 'uTime');
 const uModelLoc = gl.getUniformLocation(program, 'uModel');
 const uViewProjLoc = gl.getUniformLocation(program, 'uViewProj');
 
+// ── 4×4 행렬 도구 ─────────────────────────────────────────────────
+// WebGL 은 행렬을 "열 우선(column-major)" 으로 받습니다.
+// 아래 코드에서 **한 줄이 행렬의 한 「열」** 입니다.
+// 2주차에 종이에 쓰던 모양을 옆으로 눕혀 놓은 것이라고 생각하면 됩니다.
+//
+//   종이에 쓰던 모양              코드에 적는 모양
+//   ┌ 1  0  0  tx ┐               1,  0,  0, 0,     ← 1열
+//   │ 0  1  0  ty │      →        0,  1,  0, 0,     ← 2열
+//   │ 0  0  1  tz │               0,  0,  1, 0,     ← 3열
+//   └ 0  0  0  1  ┘              tx, ty, tz, 1,     ← 4열 (이동량이 여기 들어간다)
+//
+// 각도·이동량 같은 값을 받아야 하므로 함수로 만들고,
+// 부를 때마다 새 배열을 돌려주어 서로 영향을 주지 않게 합니다.
+
 const M4 = {};
-M4.identity = () => new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
-M4.translate = (tx, ty, tz) => new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, tx,ty,tz,1]);
-M4.scale = (sx, sy, sz) => new Float32Array([sx,0,0,0, 0,sy,0,0, 0,0,sz,0, 0,0,0,1]);
-M4.rotateX = (angle) => {
-  const c = Math.cos(angle), s = Math.sin(angle);
-  return new Float32Array([1,0,0,0, 0,c,s,0, 0,-s,c,0, 0,0,0,1]);
+
+// 단위행렬 — 곱해도 아무것도 바뀌지 않는 행렬
+M4.identity = function () {
+  return new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  ]);
 };
-M4.rotateY = (angle) => {
-  const c = Math.cos(angle), s = Math.sin(angle);
-  return new Float32Array([c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]);
+
+// 이동 — 2주차의 T(tx, ty, tz)
+M4.translate = function (tx, ty, tz) {
+  return new Float32Array([
+     1,  0,  0, 0,
+     0,  1,  0, 0,
+     0,  0,  1, 0,
+    tx, ty, tz, 1,
+  ]);
 };
-M4.multiply = (a, b) => {
+
+// 크기 — 2주차의 S(sx, sy, sz). 대각선에 배율을 놓는다
+M4.scale = function (sx, sy, sz) {
+  return new Float32Array([
+    sx,  0,  0, 0,
+     0, sy,  0, 0,
+     0,  0, sz, 0,
+     0,  0,  0, 1,
+  ]);
+};
+
+// x축 회전 — 2주차의 Rx
+M4.rotateX = function (angle) {
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  return new Float32Array([
+    1,  0, 0, 0,
+    0,  c, s, 0,
+    0, -s, c, 0,
+    0,  0, 0, 1,
+  ]);
+};
+
+// y축 회전 — 2주차의 Ry
+M4.rotateY = function (angle) {
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  return new Float32Array([
+    c, 0, -s, 0,
+    0, 1,  0, 0,
+    s, 0,  c, 0,
+    0, 0,  0, 1,
+  ]);
+};
+
+// 두 행렬을 곱합니다.  결과 = a · b   (2주차에서 손으로 하던 그 곱셈)
+M4.multiply = function (a, b) {
   const out = new Float32Array(16);
   for (let col = 0; col < 4; col++) {
     for (let row = 0; row < 4; row++) {
       let sum = 0;
-      for (let k = 0; k < 4; k++) sum += a[k * 4 + row] * b[col * 4 + k];
+      for (let k = 0; k < 4; k++) {
+        sum = sum + a[k * 4 + row] * b[col * 4 + k];
+      }
       out[col * 4 + row] = sum;
     }
   }
   return out;
 };
 
+/* ══════════════════════════════════════════════════════════════════════════
+   5. 버퍼를 만들어 GPU 메모리로 보낸다
+   ──────────────────────────────────────────────────────────────────────────
+   VAO(Vertex Array Object) 는 "어떤 버퍼를 몇 번 자리에 어떻게 읽을지"를
+   한 묶음으로 기억해 두는 것입니다. 그려야 할 때 이것만 bind 하면 됩니다.
+   ══════════════════════════════════════════════════════════════════════════ */
 function createMesh(mesh) {
   const vao = gl.createVertexArray();
   gl.bindVertexArray(vao);
@@ -221,27 +368,32 @@ function createMesh(mesh) {
     if (!data) return;
     const buf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);   // ← CPU 에서 GPU 로 복사
     gl.enableVertexAttribArray(location);
     gl.vertexAttribPointer(location, size, gl.FLOAT, false, 0, 0);
   }
-  attribute(mesh.positions, 0, 3);
-  attribute(mesh.normals, 1, 3);
-  attribute(mesh.colors, 3, 3);
+  attribute(mesh.positions, 0, 3);   // location 0 ← aPos
+  attribute(mesh.normals,   1, 3);   // location 1 ← aNormal
+  attribute(mesh.colors,    3, 3);   // location 3 ← aColor
 
   const ibo = gl.createBuffer();
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
   gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
 
   gl.bindVertexArray(null);
-  return { vao, count: mesh.indices.length };
+  return { vao: vao, count: mesh.indices.length };
 }
 
 const planet = createMesh(makeSphere(1.3, 64, 128, 1, 1, 1));
-const SPIN = 0.16;
+
+/* ══════════════════════════════════════════════════════════════════════════
+   6. 매 프레임 그린다
+   ══════════════════════════════════════════════════════════════════════════ */
+const SPIN = 0.16;                 // 자전 속도
 const startTime = performance.now();
 
 function render() {
+  // 캔버스 크기를 화면에 맞춘다 (고해상도 화면 대응)
   const dpr = window.devicePixelRatio || 1;
   const w = Math.floor(canvas.clientWidth * dpr);
   const h = Math.floor(canvas.clientHeight * dpr);
@@ -251,28 +403,42 @@ function render() {
   }
   gl.viewport(0, 0, canvas.width, canvas.height);
 
+  // 화면을 지운다
   gl.enable(gl.DEPTH_TEST);
-  gl.clearColor(0.01, 0.02, 0.04, 1.0);
+  gl.clearColor(0.02, 0.02, 0.05, 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
   const time = (performance.now() - startTime) / 1000;
+
   const aspect = canvas.width / canvas.height;
 
+  // ── 카메라 — 2주차의 기본 변환만으로 만듭니다 ──────────────────
+  // 카메라를 움직이는 대신 "세계를 반대로 움직인다" 고 생각합니다.
   let camera = M4.identity();
-  camera = M4.multiply(M4.translate(0, 0, -4), camera);
+  camera = M4.multiply(M4.translate(0, 0, -4), camera);      // 뒤로 물러난 만큼 밀어낸다
 
-  const perspective = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,-1/4, 0,0,0,1]);
+  // 원근 — 마지막 행을 건드리면 먼 것이 작아집니다 (2주차 8절)
+  const perspective = new Float32Array([
+    1, 0, 0,      0,
+    0, 1, 0,      0,
+    0, 0, 1, -1 / 4,
+    0, 0, 0,      1,
+  ]);
   camera = M4.multiply(perspective, camera);
   camera = M4.multiply(M4.scale(1 / (1.45 * aspect), 1 / 1.45, -1 / 20), camera);
 
+  const viewProj = camera;
+
   gl.useProgram(program);
   gl.uniform1f(uTimeLoc, time);
-  gl.uniformMatrix4fv(uViewProjLoc, false, camera);
+  gl.uniformMatrix4fv(uViewProjLoc, false, viewProj);
 
+  // 자전축을 살짝 기울이고 천천히 돌린다
   const model = M4.multiply(M4.rotateX(0.32), M4.rotateY(time * SPIN));
   gl.uniformMatrix4fv(uModelLoc, false, model);
   gl.bindVertexArray(planet.vao);
   gl.drawElements(gl.TRIANGLES, planet.count, gl.UNSIGNED_SHORT, 0);
+
   gl.bindVertexArray(null);
 
   requestAnimationFrame(render);

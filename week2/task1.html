@@ -38,7 +38,7 @@
        https://<username>.github.io/<저장소이름>/week2/task.html
 
    [조작]
-     마우스 드래그 - 시점 회전 / 휠 - 확대 축소
+     화살표 키 - 카메라 이동 / 마우스 드래그 - 시점 회전 / 휠 - 확대 축소
    ============================================================================ */
 'use strict';
 
@@ -63,24 +63,25 @@ function earthMatrix(t) {
 /* 달 — 실습 도구에서 놓은 순서 그대로입니다 */
 function moonMatrix(t) {
   let M = M4.identity(M4.create());
+  M = M4.rotateZ(M, M, deg(t * 1.1));   // 회전 Rz(t*1.1도)
   M = M4.translate(M, M, [60.3, 0, 0]);   // 이동 T(60.3, 0, 0)
-  M = M4.rotateZ(M, M, deg(t * 50));   // 회전 Rz(t*50도)
-  M = M4.scale(M, M, [0.273, 0.273, 0.273]);   // 크기 S(0.273, 0.273, 0.273)
+  M = M4.rotateY(M, M, deg(180));   // 회전 Ry(180도)
+  M = M4.scale(M, M, [0.27, 0.27, 0.27]);   // 크기 S(0.27, 0.27, 0.27)
   return M;
 }
 
 /* 인공위성 — 실습 도구에서 놓은 순서 그대로입니다 */
 function satelliteMatrix(t) {
   let M = M4.identity(M4.create());
-  M = M4.translate(M, M, [1.063, 0, 0]);   // 이동 T(1.063, 0, 0)
-  M = M4.rotateZ(M, M, deg(t * 50));   // 회전 Rz(t*50도)
-  M = M4.scale(M, M, [0.2, 0.2, 0.2]);   // 크기 S(0.2, 0.2, 0.2)
+  M = M4.rotateZ(M, M, deg(t * 30));   // 회전 Rz(t*30도)
+  M = M4.translate(M, M, [1.06, 0, 0]);   // 이동 T(1.06, 0, 0)
+  M = M4.scale(M, M, [0.05, 0.05, 0.05]);   // 크기 S(0.05, 0.05, 0.05)
   return M;
 }
 
 
 /* 축의 표시 범위 — 실습 도구의 「축 범위」 값입니다. */
-const RANGE = { x: 65, y: 65, z: 65 };
+const RANGE = { x: 70, y: 70, z: 70 };
 
 /* 물체 목록 — 색과 모양, 그리고 위에서 정의한 변환 함수를 묶습니다. */
 const OBJECTS = [
@@ -90,7 +91,7 @@ const OBJECTS = [
 ];
 
 /* 시간이 흐르는 속도와 되돌아가는 지점 (실습 도구와 같은 규칙) */
-const T_SPEED = 0.7;
+const T_SPEED = 0.5;
 const T_MAX = 20;
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -352,10 +353,19 @@ function drawLines(L, color, vp, m) {
 const gridBuf = lineBuf(400), axesBuf = lineBuf(24);
 
 /* ══════════════════════════════════════════════════════════════════════════
-   5. 카메라 — 마우스로 돌려 보기
+   5. 카메라 — 마우스로 방향을 정하고 화살표 키로 이동
    ══════════════════════════════════════════════════════════════════════════ */
-const cam = { yaw: 0.7, pitch: 0.42, dist: 9 };
+const cam = { yaw: Math.PI, pitch: 0.1, dist: 9, target: [0, 0, 0] };
 let dragging = false, px = 0, py = 0;
+const pressedKeys = new Set();
+
+window.addEventListener('keydown', e => {
+  if (!e.key.startsWith('Arrow')) return;
+  pressedKeys.add(e.key);
+  e.preventDefault();
+});
+window.addEventListener('keyup', e => pressedKeys.delete(e.key));
+window.addEventListener('blur', () => pressedKeys.clear());
 
 cv.addEventListener('pointerdown', e => {
   dragging = true; px = e.clientX; py = e.clientY;
@@ -380,9 +390,9 @@ cv.addEventListener('wheel', e => {
 /* z 축이 위인 좌표계입니다 (실습 도구와 같습니다) */
 function cameraEye() {
   const cp = Math.cos(cam.pitch);
-  return [cam.dist * cp * Math.cos(cam.yaw),
-          cam.dist * cp * Math.sin(cam.yaw),
-          cam.dist * Math.sin(cam.pitch)];
+  return [cam.target[0] + cam.dist * cp * Math.cos(cam.yaw),
+          cam.target[1] + cam.dist * cp * Math.sin(cam.yaw),
+          cam.target[2] + cam.dist * Math.sin(cam.pitch)];
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -394,6 +404,23 @@ let t = 0, last = performance.now();
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
+
+  const forward = [-Math.cos(cam.yaw), -Math.sin(cam.yaw)];
+  const right = [-Math.sin(cam.yaw), Math.cos(cam.yaw)];
+  const moveX = (pressedKeys.has('ArrowUp') ? forward[0] : 0)
+    - (pressedKeys.has('ArrowDown') ? forward[0] : 0)
+    + (pressedKeys.has('ArrowRight') ? right[0] : 0)
+    - (pressedKeys.has('ArrowLeft') ? right[0] : 0);
+  const moveY = (pressedKeys.has('ArrowUp') ? forward[1] : 0)
+    - (pressedKeys.has('ArrowDown') ? forward[1] : 0)
+    + (pressedKeys.has('ArrowRight') ? right[1] : 0)
+    - (pressedKeys.has('ArrowLeft') ? right[1] : 0);
+  const moveLength = Math.hypot(moveX, moveY);
+  if (moveLength > 0) {
+    const distance = 20 * dt / moveLength;
+    cam.target[0] += moveX * distance;
+    cam.target[1] += moveY * distance;
+  }
 
   // 시간 자동 증가 — T_MAX 에 닿으면 처음으로 되돌아간다
   t += dt * T_SPEED;
@@ -413,7 +440,7 @@ function frame(now) {
   const R = Math.max(rx, ry, rz);
 
   // 뷰 · 투영 행렬
-  M4.lookAt(view, cameraEye(), [0,0,0], [0,0,1]);
+  M4.lookAt(view, cameraEye(), cam.target, [0,0,1]);
   M4.perspective(proj, Math.PI/4, cv.width/cv.height, R*0.002, R*60);
   M4.multiply(vp, proj, view);
 
