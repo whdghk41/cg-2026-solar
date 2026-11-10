@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>5주차 실습 2 — 「심해의 비밀 기지」</title>
+<title>5주차 실습 2 — 「사이버 행성」</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #020408; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #05070c; }
   canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
   #hud { position: fixed; left: 12px; top: 12px; margin: 0; padding: 10px 13px;
          border: 1px solid rgba(255,255,255,.14); border-radius: 6px;
-         background: rgba(4,8,16,.78); color: #cfdcef;
+         background: rgba(8,12,20,.72); color: #cfdcef;
          font: 12px/1.75 ui-monospace, Menlo, Consolas, monospace; }
-  #hud b { color: #5efbff; }
+  #hud b { color: #ffd98a; }
   #hud .off { opacity: .35; text-decoration: line-through; }
 </style>
 </head>
@@ -20,16 +20,10 @@
 <div id="hud"></div>
 
 <script>
-/* ============================================================================
-   5주차 실습 응용 — 「심해의 비밀 기지」
-     ① point       — 심해 화산 마그마 (따뜻한 주황빛, 강한 감쇠)
-     ② directional — 수면 위 달빛 (차가운 청록색, 감쇠 없음)
-     ③ spot        — 탐수정 전조등 서치라이트 (강한 흰빛)
-
-   숫자 키 1 · 2 · 3 으로 광원을 하나씩 켜고 끌 수 있습니다.
-   ============================================================================ */
+/* NEON CORE: 회로 행성, 회전하는 기계식 궤도 링, 세 종류의 독립 광원 */
 'use strict';
 
+/* ── 메시 ─────────────────────────────────────────────────────────────── */
 function makeSphere(seg) {
   const positions = [], normals = [], indices = [];
   for (let i = 0; i <= seg; i++) {
@@ -56,41 +50,62 @@ function makePlane(size) {
            indices:   new Uint16Array([0,1,2, 0,2,3]) };
 }
 
+// XY 평면에 놓인 도넛 메시. 회전 행렬로 궤도를 기울인다.
+function makeTorus(R, r, major=120, minor=10) {
+  const positions=[], normals=[], indices=[];
+  for(let i=0;i<=major;i++) for(let j=0;j<=minor;j++) {
+    const a=i*2*Math.PI/major, b=j*2*Math.PI/minor;
+    const x=(R+r*Math.cos(b))*Math.cos(a), y=(R+r*Math.cos(b))*Math.sin(a), z=r*Math.sin(b);
+    positions.push(x,y,z); normals.push(Math.cos(b)*Math.cos(a),Math.cos(b)*Math.sin(a),Math.sin(b));
+  }
+  for(let i=0;i<major;i++) for(let j=0;j<minor;j++) {
+    const a=i*(minor+1)+j,b=a+minor+1;
+    indices.push(a,b,a+1,a+1,b,b+1);
+  }
+  return {positions:new Float32Array(positions),normals:new Float32Array(normals),indices:new Uint16Array(indices)};
+}
+
+/* ── 버텍스 셰이더 ─────────────────────────────────────────────────────── */
 const VS_SOURCE = `#version 300 es
 layout(location=0) in vec3 aPos;
 layout(location=1) in vec3 aNormal;
 uniform mat4 uModel, uView, uProj;
 uniform mat3 uNormalMat;
-out vec3 vWorldPos, vNormal;
+out vec3 vWorldPos, vNormal, vLocalPos;
 void main() {
   vec4 world = uModel * vec4(aPos, 1.0);
   vWorldPos  = world.xyz;
+  vLocalPos = aPos;
   vNormal    = uNormalMat * aNormal;
   gl_Position = uProj * uView * world;
 }
 `;
 
+/* ── 프래그먼트 셰이더 — 광원 세 개를 각각 계산해서 더한다 ───────────── */
 const FS_SOURCE = `#version 300 es
 precision highp float;
 
-in vec3 vWorldPos, vNormal;
+in vec3 vWorldPos, vNormal, vLocalPos;
 
 uniform vec3  uBaseColor;
 uniform float uShininess, uKs;
 uniform bool  uEmissive;
+uniform int uMaterialMode;
+uniform float uTime;
 uniform vec3  uViewPos;
 
-uniform vec3  uMagmaPos, uMagmaColor;    // ① point (마그마)
-uniform vec3  uMoonDir,  uMoonColor;     // ② directional (달빛)
+uniform vec3  uSunPos,   uSunColor;      // ① point
+uniform vec3  uStarDir,  uStarColor;     // ② directional
 uniform vec3  uSpotPos,  uSpotDir, uSpotColor;
-uniform float uCosIn, uCosOut;           // ③ spot (탐수정)
+uniform float uCosIn, uCosOut;           // ③ spot
 uniform bool  uOn1, uOn2, uOn3;
 
 out vec4 fragColor;
 
+// 하나의 광원이 만드는 밝기 = diffuse + specular
 vec3 shade(vec3 N, vec3 V, vec3 L, vec3 lightColor, float att) {
   float lambert = max(dot(N, L), 0.0);
-  if (lambert <= 0.0) return vec3(0.0);
+  if (lambert <= 0.0) return vec3(0.0);        // 등진 면에는 하이라이트도 없다
   vec3  R    = reflect(-L, N);
   float spec = pow(max(dot(R, V), 0.0), uShininess);
   return (uBaseColor * lambert + uKs * spec) * lightColor * att;
@@ -102,31 +117,51 @@ void main() {
   vec3 N = normalize(vNormal);
   vec3 V = normalize(uViewPos - vWorldPos);
 
-  vec3 color = 0.04 * uBaseColor;             // 심해의 어두운 환경광
+  vec3 color = 0.035 * uBaseColor;             // 야외의 밤 — ambient 는 아주 작게
 
-  if (uOn1) {                                  // ① point — 해저 화산 마그마 (따뜻함)
-    vec3  d    = uMagmaPos - vWorldPos;
+  if (uOn1) {                                  // ① point — 지는 해
+    vec3  d    = uSunPos - vWorldPos;
     float dist = length(d);
-    color += shade(N, V, d / dist, uMagmaColor, 1.0 / (1.0 + 0.02 * dist * dist));
+    color += shade(N, V, d / dist, uSunColor, 1.0 / (1.0 + 0.012 * dist * dist));
   }
-  if (uOn2) {                                  // ② directional — 수면 위 달빛 (차가움)
-    color += shade(N, V, normalize(-uMoonDir), uMoonColor, 1.0);
+  if (uOn2) {                                  // ② directional — 먼 항성
+    color += shade(N, V, normalize(-uStarDir), uStarColor, 1.0);
   }
-  if (uOn3) {                                  // ③ spot — 탐수정 서치라이트
+  if (uOn3) {                                  // ③ spot — 서치라이트
     vec3  d    = uSpotPos - vWorldPos;
     float dist = length(d);
     vec3  L    = d / dist;
-    float att  = 1.0 / (1.0 + 0.04 * dist * dist);
+    float att  = 1.0 / (1.0 + 0.05 * dist * dist);
     float c    = dot(-L, normalize(uSpotDir));
     att *= clamp((c - uCosOut) / (uCosIn - uCosOut), 0.0, 1.0);
     color += shade(N, V, L, uSpotColor, att);
   }
 
-  color = color / (color + 1.0);
-  fragColor = vec4(pow(color, vec3(1.0 / 2.2)), 1.0);
+  // 행성의 회로는 조명과 별도로 약하게 자체 발광한다.
+  // 구면 좌표를 격자로 양자화해 위도/경도 회로 + 회로 노드를 만든다.
+  if (uMaterialMode == 1) {
+    vec3 p = normalize(vLocalPos);
+    float longitude = atan(p.z, p.x);
+    float latitude = asin(clamp(p.y,-1.0,1.0));
+    float gx = longitude * 13.0;
+    float gy = latitude * 19.0;
+    float lineX = 1.0 - smoothstep(0.025,0.085,abs(fract(gx)-0.5));
+    float lineY = 1.0 - smoothstep(0.025,0.085,abs(fract(gy)-0.5));
+    float cells = step(0.32, fract(sin(floor(gx)*43.7 + floor(gy)*19.3)*43758.5));
+    float traces = max(lineX*0.75, lineY*0.60) * cells;
+    float node = (1.0-smoothstep(0.06,0.16,length(fract(vec2(gx,gy))-0.5))) * cells;
+    float pulse = 0.72 + 0.28*sin(uTime*2.2 + gx*0.8 + gy*0.4);
+    color += vec3(0.015,0.90,1.30) * (traces*0.75 + node*1.4) * pulse;
+    // 인공 행성의 적도에 두꺼운 빛나는 에너지 띠
+    float equator = 1.0-smoothstep(0.015,0.055,abs(p.y));
+    color += vec3(0.02,0.32,0.55)*equator;
+  }
+  color = color / (color + 1.0);               // 아주 단순한 톤 매핑
+  fragColor = vec4(pow(color, vec3(1.0 / 2.2)), 1.0);   // 감마 보정
 }
 `;
 
+/* ── 4×4 행렬 ─────────────────────────────────────────────────────────── */
 const Mat4 = {
   identity: function () { return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]); },
   multiply: function (a, b) {
@@ -139,6 +174,8 @@ const Mat4 = {
   },
   translate: function (x,y,z) { const m = Mat4.identity(); m[12]=x; m[13]=y; m[14]=z; return m; },
   scale: function (x,y,z) { const m = Mat4.identity(); m[0]=x; m[5]=y; m[10]=z; return m; },
+  rotateX: function(r) {const m=Mat4.identity(),c=Math.cos(r),s=Math.sin(r);m[5]=c;m[6]=s;m[9]=-s;m[10]=c;return m;},
+  rotateZ: function(r) {const m=Mat4.identity(),c=Math.cos(r),s=Math.sin(r);m[0]=c;m[1]=s;m[4]=-s;m[5]=c;return m;},
   rotateY: function (r) {
     const m = Mat4.identity(), c = Math.cos(r), s = Math.sin(r);
     m[0]=c; m[2]=-s; m[8]=s; m[10]=c; return m;
@@ -170,25 +207,33 @@ const Mat4 = {
   },
 };
 
+/* ── WebGL 준비 ───────────────────────────────────────────────────────── */
 const canvas = document.getElementById('glcanvas');
 const gl = canvas.getContext('webgl2');
-if (!gl) { alert('WebGL2를 지원하지 않는 브라우저입니다.'); throw new Error('no webgl2'); }
-
+if (!gl) {
+  document.body.innerHTML = '<p style="color:#fff;font:16px sans-serif;padding:2rem">' +
+    'WebGL2 를 사용할 수 없습니다. 최신 Chrome 또는 Edge 로 열어 주세요.</p>';
+  throw new Error('no webgl2');
+}
 function compileShader(type, source) {
   const s = gl.createShader(type);
   gl.shaderSource(s, source); gl.compileShader(s);
-  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+    throw new Error(gl.getShaderInfoLog(s));
   return s;
 }
 const program = gl.createProgram();
 gl.attachShader(program, compileShader(gl.VERTEX_SHADER, VS_SOURCE));
 gl.attachShader(program, compileShader(gl.FRAGMENT_SHADER, FS_SOURCE));
 gl.linkProgram(program);
+if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
 
 const U = {};
 ['uModel','uView','uProj','uNormalMat','uBaseColor','uShininess','uKs','uEmissive','uViewPos',
- 'uMagmaPos','uMagmaColor','uMoonDir','uMoonColor','uSpotPos','uSpotDir','uSpotColor',
- 'uCosIn','uCosOut','uOn1','uOn2','uOn3'].forEach(n => U[n] = gl.getUniformLocation(program, n));
+ 'uSunPos','uSunColor','uStarDir','uStarColor','uSpotPos','uSpotDir','uSpotColor',
+ 'uCosIn','uCosOut','uOn1','uOn2','uOn3','uMaterialMode','uTime'].forEach(function (n) {
+  U[n] = gl.getUniformLocation(program, n);
+});
 
 function createMesh(mesh) {
   const vao = gl.createVertexArray();
@@ -209,57 +254,64 @@ function createMesh(mesh) {
   return { vao: vao, count: mesh.indices.length };
 }
 const sphere = createMesh(makeSphere(40));
-const plane  = createMesh(makePlane(60));
+const ringMesh = createMesh(makeTorus(3.05,0.055));
+const thinRing = createMesh(makeTorus(3.35,0.022));
 gl.enable(gl.DEPTH_TEST);
 
+/* ── 광원 켜기/끄기 ───────────────────────────────────────────────────── */
 const on = { l1: true, l2: true, l3: true };
-window.addEventListener('keydown', e => {
+window.addEventListener('keydown', function (e) {
   if (e.key === '1') on.l1 = !on.l1;
   if (e.key === '2') on.l2 = !on.l2;
   if (e.key === '3') on.l3 = !on.l3;
   paintHud();
 });
-
 const hud = document.getElementById('hud');
 function paintHud() {
   function row(k, key, text) {
-    return `<div class="${on[k] ? '' : 'off'}"><b>[${key}]</b> ${text}</div>`;
+    return '<div class="' + (on[k] ? '' : 'off') + '"><b>' + key + '</b> ' + text + '</div>';
   }
-  hud.innerHTML = `
-    <div style="margin-bottom:6px"><b>심해 비밀 기지 연출</b></div>
-    ${row('l1', '1', 'Point — 해저 마그마 (따뜻한 주황빛)')}
-    ${row('l2', '2', 'Directional — 수면 달빛 (차가운 청록빛)')}
-    ${row('l3', '3', 'Spot — 탐수정 서치라이트')}
-    <div style="margin-top:6px;opacity:.6">드래그: 시점 회전 / 휠: 확대·축소</div>
-  `;
+  hud.innerHTML =
+    '<div style="margin-bottom:6px"><b>NEON CORE — 사이버 행성 연구소</b> — 숫자 키로 광원을 껐다 켜 보세요</div>' +
+    row('l1', '1', 'point &nbsp;&nbsp;&nbsp; 에너지 코어 (주황색)') +
+    row('l2', '2', 'directional 항성광 (차가운 청색)') +
+    row('l3', '3', 'spot &nbsp;&nbsp;&nbsp;&nbsp; 보라색 스캐너') +
+    '<div style="margin-top:6px;opacity:.6">드래그 = 시점 회전 · 휠 = 확대/축소</div>';
 }
 paintHud();
 
-const cam = { yaw: 0.4, pitch: 0.2, dist: 16 };
+/* ── 카메라 ───────────────────────────────────────────────────────────── */
+const cam = { yaw: 0.35, pitch: 0.22, dist: 19 };
 let dragging = false, lastX = 0, lastY = 0;
-canvas.addEventListener('pointerdown', e => { dragging = true; lastX = e.clientX; lastY = e.clientY; canvas.setPointerCapture(e.pointerId); });
-canvas.addEventListener('pointermove', e => {
+canvas.addEventListener('pointerdown', function (e) {
+  dragging = true; lastX = e.clientX; lastY = e.clientY; canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', function (e) {
   if (!dragging) return;
   cam.yaw += (e.clientX - lastX) * 0.008;
   cam.pitch = Math.max(-0.05, Math.min(1.2, cam.pitch + (e.clientY - lastY) * 0.005));
   lastX = e.clientX; lastY = e.clientY;
 });
-canvas.addEventListener('pointerup', e => { dragging = false; canvas.releasePointerCapture(e.pointerId); });
-canvas.addEventListener('wheel', e => {
+canvas.addEventListener('pointerup', function (e) {
+  dragging = false; canvas.releasePointerCapture(e.pointerId);
+});
+canvas.addEventListener('wheel', function (e) {
   e.preventDefault();
   cam.dist = Math.max(4, Math.min(45, cam.dist * (1 + e.deltaY * 0.001)));
 }, { passive: false });
 
-// 물체마다 재질(색상, 광택 반사도)을 다르게 부여
-const OBJECTS = [
-  { at: [-3.5, 0.8, -1.0], r: 0.8, col: [0.25, 0.25, 0.28], shin:  8,  ks: 0.05 }, // 일반 심해 암석
-  { at: [-1.0, 1.5,  1.0], r: 1.2, col: [0.20, 0.50, 0.40], shin:  20, ks: 0.20 }, // 해초 낀 바위
-  { at: [ 2.2, 1.2, -0.5], r: 1.0, col: [0.70, 0.90, 0.95], shin: 120, ks: 0.85 }, // 수정 기둥 (고광택)
-  { at: [ 4.5, 0.5,  1.5], r: 0.5, col: [0.30, 0.22, 0.20], shin:  10, ks: 0.08 }, // 작은 광물
+/* ── 장면 ─────────────────────────────────────────────────────────────── */
+// 재질을 물체마다 다르게 준다 — 같은 조명에서 얼마나 달라 보이는지
+const ROCKS = [
+  { at: [-4.1, 1.0, -1.0], r: 0.85, col: [0.28, 0.35, 0.48], shin:  9, ks: 0.12 },
+  { at: [0.0, 2.3, 0.0], r: 2.15, col: [0.045, 0.14, 0.22], shin: 125, ks: 0.88 },
+  { at: [ 3.7, 1.5, -1.0], r: 0.95, col: [0.54, 0.35, 0.78], shin: 65, ks: 0.60 },  // 얼음
+  { at: [ 4.7, 0.65, 2.1], r: 0.6, col: [0.33, 0.37, 0.42], shin: 7, ks: 0.07 },
 ];
 
 const startTime = performance.now();
-function draw(mesh, model, color, shin, ks, emissive) {
+function draw(mesh, model, color, shin, ks, emissive, materialMode=0) {
+  gl.uniform1i(U.uMaterialMode, materialMode);
   gl.uniformMatrix4fv(U.uModel, false, model);
   gl.uniformMatrix3fv(U.uNormalMat, false, Mat4.normalFromMat4(model));
   gl.uniform3fv(U.uBaseColor, color);
@@ -275,64 +327,81 @@ function render() {
   const w = Math.floor(canvas.clientWidth * dpr), h = Math.floor(canvas.clientHeight * dpr);
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
   gl.viewport(0, 0, canvas.width, canvas.height);
-  gl.clearColor(0.01, 0.02, 0.04, 1.0);
+  gl.clearColor(0.008, 0.012, 0.035, 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
   const t = (performance.now() - startTime) / 1000;
 
   const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
-  const eye = [Math.sin(cam.yaw)*cp*cam.dist, sp*cam.dist + 1.5, Math.cos(cam.yaw)*cp*cam.dist];
-  const view = Mat4.lookAt(eye, [0, 1.0, 0], [0, 1, 0]);
+  const eye = [Math.sin(cam.yaw)*cp*cam.dist, sp*cam.dist + 1.6, Math.cos(cam.yaw)*cp*cam.dist];
+  const view = Mat4.lookAt(eye, [0, 1.2, 0], [0, 1, 0]);
   const proj = Mat4.perspective(Math.PI/4, canvas.width/canvas.height, 0.1, 300);
 
-  // ① 마그마 위치 (서서히 움직임)
-  const magmaPos = [-4.0, 0.5 + Math.sin(t * 0.8) * 0.2, -3.0];
-  // ③ 탐수정 서치라이트 위치 및 방향
-  const spotPos = [Math.sin(t * 0.4) * 3.0, 4.0, 4.0];
-  const aim = [Math.sin(t * 0.4 + 1.0) * 2.0, 0.5, 0.0];
+  // ① 주황색 에너지 코어 (point)
+  const sunPos = [-5.4, 3.8 + Math.sin(t * 0.4) * 0.25, -1.8];
+  // ③ 보라색 탐사 스캐너 (spot)
+  const spotPos = [3.7 + Math.sin(t * 0.4) * 0.7, 6.0, 4.0];
+  const aim = [Math.sin(t * 0.6) * 1.7, 2.3, 0.0];
   const spotDir = [aim[0]-spotPos[0], aim[1]-spotPos[1], aim[2]-spotPos[2]];
 
   gl.useProgram(program);
   gl.uniformMatrix4fv(U.uView, false, view);
   gl.uniformMatrix4fv(U.uProj, false, proj);
   gl.uniform3fv(U.uViewPos, eye);
-
-  // 조명 파라미터 전달 (따뜻한 마그마 vs 차가운 달빛)
-  gl.uniform3fv(U.uMagmaPos, magmaPos);
-  gl.uniform3f(U.uMagmaColor, 4.2, 1.3, 0.3);          // 따뜻한 주황빛 마그마
-  gl.uniform3f(U.uMoonDir, 0.4, -0.8, 0.5);
-  gl.uniform3f(U.uMoonColor, 0.12, 0.35, 0.55);        // 차가운 청록색 달빛
+  gl.uniform1f(U.uTime,t);
+  gl.uniform3fv(U.uSunPos, sunPos);
+  gl.uniform3f(U.uSunColor, 4.2, 1.25, 0.35);          // 따뜻한 주황
+  gl.uniform3f(U.uStarDir, 0.55, -0.65, 0.72);
+  gl.uniform3f(U.uStarColor, 0.20, 0.38, 0.85);        // 차가운 파랑
   gl.uniform3fv(U.uSpotPos, spotPos);
   gl.uniform3fv(U.uSpotDir, spotDir);
-  gl.uniform3f(U.uSpotColor, 4.0, 4.0, 3.8);           // 밝은 전조등
-  gl.uniform1f(U.uCosIn,  Math.cos(12 * Math.PI / 180));
-  gl.uniform1f(U.uCosOut, Math.cos(20 * Math.PI / 180));
-
+  gl.uniform3f(U.uSpotColor, 3.5, 0.9, 5.5);
+  gl.uniform1f(U.uCosIn,  Math.cos(11 * Math.PI / 180));
+  gl.uniform1f(U.uCosOut, Math.cos(19 * Math.PI / 180));
   gl.uniform1i(U.uOn1, on.l1 ? 1 : 0);
   gl.uniform1i(U.uOn2, on.l2 ? 1 : 0);
   gl.uniform1i(U.uOn3, on.l3 ? 1 : 0);
 
-  // 해저 지형 렌더링 (어두운 모래/현무암 색상)
-  draw(plane, Mat4.identity(), [0.15, 0.18, 0.22], 6, 0.03, false);
+  // 떠 있는 사이버 행성: 회로 표면과 기계식 궤도를 가진 인공 천체
 
-  // 주변 구조물 및 수정 렌더링
-  for (let i = 0; i < OBJECTS.length; i++) {
-    const obj = OBJECTS[i];
-    let m = Mat4.multiply(Mat4.translate(obj.at[0], obj.at[1], obj.at[2]), Mat4.rotateY(t * 0.1));
-    m = Mat4.multiply(m, Mat4.scale(obj.r, obj.r * 1.2, obj.r));
-    draw(sphere, m, obj.col, obj.shin, obj.ks, false);
+  for (let i = 0; i < ROCKS.length; i++) {
+    const k = ROCKS[i];
+    let m = Mat4.multiply(Mat4.translate(k.at[0], k.at[1], k.at[2]), Mat4.rotateY(t * 0.15));
+    m = Mat4.multiply(m, Mat4.scale(k.r, k.r * 0.86, k.r));
+    draw(sphere, m, k.col, k.shin, k.ks, false, i===1 ? 1 : 0);
   }
 
-  // 마그마 발광체 표시
-  if (on.l1) {
-    draw(sphere, Mat4.multiply(Mat4.translate(magmaPos[0], magmaPos[1], magmaPos[2]),
-                 Mat4.scale(0.8, 0.8, 0.8)), [1.0, 0.35, 0.05], 1, 0, true);
+  // 서로 다른 경사로 회전하는 두 겹의 금속 궤도와 네온 도선
+  const center = Mat4.translate(0,2.3,0);
+  let r1 = Mat4.multiply(center,Mat4.rotateY(t*0.19));
+  r1 = Mat4.multiply(r1,Mat4.rotateX(0.65));
+  draw(ringMesh,r1,[0.06,0.32,0.44],110,0.8,false);
+  let r2 = Mat4.multiply(center,Mat4.rotateY(-t*0.13));
+  r2 = Mat4.multiply(r2,Mat4.rotateX(-0.65));
+  r2 = Mat4.multiply(r2,Mat4.rotateZ(0.35));
+  draw(thinRing,r2,[0.0,0.88,1.0],1,0,true);
+  // 링의 장치 모듈: 궤도를 따라 배치된 발광 데이터 노드
+  for(let i=0;i<16;i++) {
+    const a=i*Math.PI/8+t*0.19;
+    const x=3.05*Math.cos(a), y=3.05*Math.sin(a)*Math.cos(0.65), z=3.05*Math.sin(a)*Math.sin(0.65);
+    const m=Mat4.multiply(Mat4.translate(x,2.3+y,z),Mat4.scale(0.095,0.095,0.095));
+    draw(sphere,m,[0.04,0.78,1.0],1,0,true);
   }
-  // 탐수정 발광체 표시
-  if (on.l3) {
-    draw(sphere, Mat4.multiply(Mat4.translate(spotPos[0], spotPos[1], spotPos[2]),
-                 Mat4.scale(0.2, 0.2, 0.2)), [0.9, 0.95, 1.0], 1, 0, true);
+
+  // 중앙 행성 주변을 도는 작은 금속 위성들
+  for (let i = 0; i < 10; i++) {
+    const a = i * Math.PI * 2 / 10 + t * 0.12;
+    const x = Math.cos(a) * 3.05, z = Math.sin(a) * 3.05;
+    const y = 2.3 + Math.sin(a * 2) * 0.35;
+    const m = Mat4.multiply(Mat4.translate(x, y, z), Mat4.scale(0.16, 0.16, 0.16));
+    draw(sphere, m, [0.15, 0.9, 0.95], 150, 0.9, false);
   }
+
+  // 광원 위치 표시 (자체발광)
+  if (on.l1) draw(sphere, Mat4.multiply(Mat4.translate(sunPos[0], sunPos[1], sunPos[2]),
+                   Mat4.scale(1.5, 1.5, 1.5)), [1.0, 0.52, 0.22], 1, 0, true);
+  if (on.l3) draw(sphere, Mat4.multiply(Mat4.translate(spotPos[0], spotPos[1], spotPos[2]),
+                   Mat4.scale(0.16, 0.16, 0.16)), [0.8, 0.3, 1.0], 1, 0, true);
 
   gl.bindVertexArray(null);
   requestAnimationFrame(render);
