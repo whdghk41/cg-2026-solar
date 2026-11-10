@@ -10,7 +10,8 @@
       {value:'1',label:'② Ray tracing: 그림자 광선'},
       {value:'2',label:'③ Path tracing: 확산 반사'}]},
     {id:'resolution',type:'select',label:'측정 해상도',value:'320',options:[
-      {value:'320',label:'320 × 180'}, {value:'640',label:'640 × 360'},
+      {value:'320',label:'320 × 180'}, {value:'480',label:'480 × 270'},
+      {value:'640',label:'640 × 360'},
       {value:'960',label:'960 × 540'}, {value:'1280',label:'1280 × 720'},
       {value:'1920',label:'1920 × 1080 (고부하)'}]},
     {id:'samples',type:'select',label:'Path 표본/픽셀',value:'8',options:[
@@ -22,9 +23,14 @@
   ]);
   const qualityProfiles=[
     {name:'절전',resolution:'320',samples:'4',bounces:'1',advanced:false},
-    {name:'보통',resolution:'640',samples:'8',bounces:'2',advanced:true},
-    {name:'높음',resolution:'960',samples:'16',bounces:'3',advanced:true},
-    {name:'매우 높음',resolution:'1280',samples:'16',bounces:'3',advanced:true},
+    {name:'절전+',resolution:'480',samples:'4',bounces:'1',advanced:false},
+    {name:'보통',resolution:'640',samples:'4',bounces:'1',advanced:false},
+    {name:'보통+',resolution:'640',samples:'8',bounces:'1',advanced:false},
+    {name:'높음',resolution:'640',samples:'8',bounces:'2',advanced:true},
+    {name:'높음+',resolution:'960',samples:'8',bounces:'2',advanced:true},
+    {name:'매우 높음',resolution:'960',samples:'16',bounces:'2',advanced:true},
+    {name:'매우 높음+',resolution:'960',samples:'16',bounces:'3',advanced:true},
+    {name:'최상',resolution:'1280',samples:'16',bounces:'3',advanced:true},
     {name:'최고',resolution:'1920',samples:'32',bounces:'4',advanced:true}
   ];
   const compactDevice=matchMedia('(max-width: 800px)').matches||matchMedia('(pointer: coarse)').matches;
