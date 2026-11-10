@@ -293,6 +293,7 @@
     let best=qualityProfiles[0],bestTime=null,tested=false;
     profile.textContent=`${deviceLabel} · ${targetFps} FPS 기준으로 화질을 자동 측정합니다.`;
     result.textContent='Path tracing 부하를 단계별로 확인 중…';
+    let rejectedProfile=null,rejectedTime=null;
     try{
       for(const candidate of candidates){
         applyQuality(candidate);
@@ -301,7 +302,11 @@
         for(let trial=0;trial<5;trial++)times.push(await timedDraw(2));
         tested=true;
         const elapsed=percentile(times,0.8);
-        if(elapsed>budget)break;
+        if(elapsed>budget){
+          rejectedProfile=candidate;
+          rejectedTime=elapsed;
+          break;
+        }
         best=candidate;
         bestTime=elapsed;
       }
@@ -310,10 +315,10 @@
       profile.textContent=`자동 화질: ${best.name} · ${dimensions} · ${best.samples}표본 · ${best.bounces}회 반사 · 고급 효과 ${best.advanced?'켬':'끔'}`;
       status.textContent=bestTime===null
         ?`${targetFps} FPS 기준을 만족한 화질이 없어 최소 설정을 적용했습니다 · 기준 ${budget.toFixed(1)} ms/frame`
-        :`Path tracing 80백분위 ${bestTime.toFixed(2)} ms/frame · 목표 ${budget.toFixed(1)} ms/frame (${targetFps} FPS)`;
+        :`Path tracing ${bestTime.toFixed(2)} ms/frame · 목표 ${budget.toFixed(1)} ms/frame (${targetFps} FPS)${rejectedProfile?` · 다음 ${rejectedProfile.resolution}×${Number(rejectedProfile.resolution)*9/16}은 ${rejectedTime.toFixed(2)} ms로 초과`:''}`;
       result.textContent=bestTime===null
         ?`각 화질을 준비 렌더 1회 후 5회 측정했지만, 최소 설정도 ${targetFps} FPS 기준을 만족하지 못했습니다.${!tested?' 자동 측정값이 없어 최소 설정을 적용했습니다.':''} 직접 설정도 변경할 수 있습니다.`
-        :`각 화질을 준비 렌더 1회 후 5회 측정합니다. 5회 중 4회 이상이 ${targetFps} FPS 기준을 만족하는 가장 높은 화질을 선택했습니다. 직접 설정도 변경할 수 있습니다.`;
+        :`${rejectedProfile?`${rejectedProfile.resolution}×${Number(rejectedProfile.resolution)*9/16} 설정은 목표 프레임 시간을 넘어 직전 통과 화질을 선택했습니다. `:''}각 후보는 준비 렌더 1회와 5회 측정 후 80백분위로 판정합니다. 화질 선택은 직접 변경할 수 있습니다.`;
     }catch(error){
       applyQuality(best);
       const dimensions=`${best.resolution}×${Number(best.resolution)*9/16}`;
