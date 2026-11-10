@@ -19,13 +19,13 @@
   <div class="stage"><canvas id="cv" width="320" height="180" aria-label="같은 3D 방을 local, ray tracing, path tracing으로 그린 결과"></canvas></div>
   <aside class="panel">
     <h1>세 렌더링 방식 비교</h1>
-    <p class="sub">GitHub Pages에 배포한 주소를 각 기기에서 열어 측정하세요. 거울·유리·환경 반사를 켜고 해상도·표본·반사 횟수를 높여 성능 한계를 찾아보세요.</p>
+    <p class="sub">GitHub Pages 주소를 PC·노트북·모바일에서 열면 렌더링과 기기별 화질 측정이 자동으로 시작됩니다. 모바일은 30 FPS, PC·노트북은 60 FPS를 목표로 화질을 고릅니다. 거울·유리·환경 반사를 켜고 해상도·표본·반사 횟수를 높여 성능 한계도 확인하세요.</p>
     <p id="profile" class="note" aria-live="polite"></p>
     <div id="ui"></div>
     <div class="actions"><button id="measure" type="button">세 방식 측정</button></div>
     <p id="status" role="status"></p>
     <div id="result" class="result" aria-live="polite"></div>
-    <p class="note">지원 브라우저에서는 WebGL GPU 타이머로 그리기 명령의 실행 시간을 잽니다. 미지원 기기에서는 동기화 포함 경과 시간을 표시합니다. 측정 종류가 다르면 수치를 직접 비교하지 마세요. 고부하 설정은 낮은 값부터 한 단계씩 올리세요.</p>
+    <p class="note">지원 브라우저에서는 WebGL GPU 타이머로 그리기 명령의 실행 시간을 잽니다. 미지원 기기에서는 동기화 포함 경과 시간을 표시합니다. 측정 종류가 다르면 수치를 직접 비교하지 마세요. 서로 다른 두 기기에서 같은 Pages 주소를 열고 자동 화질과 공통 조건을 각각 기록하세요. 고부하 설정은 낮은 값부터 한 단계씩 올리세요.</p>
   </aside>
 </div>
 <script src="demo.js"></script>
